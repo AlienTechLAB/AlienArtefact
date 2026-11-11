@@ -8,7 +8,7 @@ use egui::{
 };
 
 use crate::app::App;
-use crate::model::{color, label_center, End, Id, ShapeKind};
+use crate::model::{color, label_center, End, Id, LinkKind, RelationKind, ShapeKind};
 use crate::render::{head_len, layout_centered, paint_badge, paint_edge, paint_shape, paint_text};
 
 pub const GRID: f32 = 10.0;
@@ -28,7 +28,8 @@ pub enum Drag {
     Rubber { start: Pos2 },
     Connect { from: Id },
     /// Dragging one end of a line (0 = start, 1 = end); dropping it on a shape attaches it.
-    Endpoint { id: Id, end: usize },
+    /// `orig` is where that end was, restored if the drop is not allowed.
+    Endpoint { id: Id, end: usize, orig: End },
     Pan,
 }
 
@@ -145,10 +146,10 @@ impl App {
 
         if matches!(self.drag, Drag::None) {
             self.hovered = pointer
-                .filter(|p| rect.contains(*p) && self.pointer_tool.is_none())
+                .filter(|p| rect.contains(*p) && self.link_tool.is_none())
                 .and_then(|p| self.hover_target(p));
         }
-        if self.pointer_tool.is_some() && resp.hovered() {
+        if self.link_tool.is_some() && resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
 
@@ -216,12 +217,17 @@ impl App {
     fn begin_drag(&mut self, p: Pos2, shift: bool) {
         let w = self.to_world(p);
 
-        // Pointer tool: start a new pointer here and drag its end.
-        if let Some(kind) = self.pointer_tool.take() {
+        // Pointer/relation tool: start a new line here and drag its end.
+        if let Some(kind) = self.link_tool.take() {
             let from = self.end_at(w, None);
-            let id = self.diagram.add_pointer(from, End::point(w), kind, self.pointer_const);
+            if !self.diagram.link_can_start(kind, from) {
+                self.status = format!("{} must start on a class.", kind.name());
+                return;
+            }
+            let orig = End::point(w);
+            let id = self.diagram.add_link(from, orig, kind, self.pointer_const);
             self.select_only(id);
-            self.drag = Drag::Endpoint { id, end: 1 };
+            self.drag = Drag::Endpoint { id, end: 1, orig };
             return;
         }
 
@@ -229,7 +235,9 @@ impl App {
         for &id in &self.selection {
             if let Some(ends) = self.edge_ends_screen(id) {
                 if let Some(end) = ends.iter().position(|e| e.distance(p) <= HANDLE_HIT) {
-                    self.drag = Drag::Endpoint { id, end };
+                    let e = self.diagram.edge(id).unwrap();
+                    let orig = if end == 0 { e.from } else { e.to };
+                    self.drag = Drag::Endpoint { id, end, orig };
                     return;
                 }
             }
@@ -312,7 +320,7 @@ impl App {
                     }
                 }
             }
-            Drag::Endpoint { id, end } => {
+            Drag::Endpoint { id, end, .. } => {
                 let (id, end) = (*id, *end);
                 let p = End::point(pos2(snap(w.x, on), snap(w.y, on)));
                 if let Some(e) = self.diagram.edge_mut(id) {
@@ -348,12 +356,29 @@ impl App {
     fn end_drag(&mut self, p: Pos2) {
         let w = self.to_world(p);
         match std::mem::replace(&mut self.drag, Drag::None) {
-            Drag::Endpoint { id, end } => {
+            Drag::Endpoint { id, end, orig } => {
                 let Some(e) = self.diagram.edge(id) else { return };
                 let other = if end == 0 { e.to } else { e.from };
-                // Pointers may point to their own object; plain connectors may not.
+                // Pointers may point to their own object; other lines may not.
                 let exclude = if e.pointer.is_some() { None } else { other.node() };
                 let new_end = self.end_at(w, exclude);
+                if let Some(kind) = e.link() {
+                    let (from, to) = if end == 0 { (new_end, other) } else { (other, new_end) };
+                    if !self.diagram.link_allowed(kind, from, to) {
+                        let (from, to) = if end == 0 { (orig, other) } else { (other, orig) };
+                        if self.diagram.link_allowed(kind, from, to) {
+                            // Existing line: put the end back where it was.
+                            let e = self.diagram.edge_mut(id).unwrap();
+                            if end == 0 { e.from = orig } else { e.to = orig }
+                        } else {
+                            // Line being drawn: drop it.
+                            self.diagram.edges.retain(|e| e.id != id);
+                            self.selection.remove(&id);
+                        }
+                        self.status = format!("{} must go from a class to a trait.", kind.name());
+                        return;
+                    }
+                }
                 let e = self.diagram.edge_mut(id).unwrap();
                 if end == 0 { e.from = new_end } else { e.to = new_end }
                 // A line dragged to (almost) nothing gets a default length instead of vanishing.
@@ -405,13 +430,17 @@ impl App {
     }
 
     fn on_click(&mut self, p: Pos2, shift: bool) {
-        // Pointer tool + click (no drag): place a default-length horizontal pointer.
-        if let Some(kind) = self.pointer_tool.take() {
+        // Pointer/relation tool + click (no drag): place a default-length horizontal line.
+        if let Some(kind) = self.link_tool.take() {
+            if kind == LinkKind::Relation(RelationKind::Implements) {
+                self.status = "Implements: drag from a class to a trait.".into();
+                return;
+            }
             let w = self.to_world(p);
             let from = self.end_at(w, None);
             let start = self.diagram.end_center(from).unwrap_or(w);
             let to = End::point(self.snap_pos(start + vec2(120.0, 0.0)));
-            let id = self.diagram.add_pointer(from, to, kind, self.pointer_const);
+            let id = self.diagram.add_link(from, to, kind, self.pointer_const);
             self.select_only(id);
             return;
         }
@@ -569,16 +598,20 @@ impl App {
         }
 
         match &self.drag {
-            Drag::Endpoint { id, end } => {
-                // Highlight the shape the end would attach to.
-                let other = self
-                    .diagram
-                    .edge(*id)
-                    .filter(|e| e.pointer.is_none())
-                    .and_then(|e| if *end == 0 { e.to } else { e.from }.node());
+            Drag::Endpoint { id, end, .. } => {
+                // Highlight the shape the end would attach to (only where the line is allowed).
+                let edge = self.diagram.edge(*id);
+                let other_end = edge.map(|e| if *end == 0 { e.to } else { e.from });
+                let other = edge.filter(|e| e.pointer.is_none()).and(other_end).and_then(|o| o.node());
                 let target = pointer
                     .and_then(|p| self.diagram.node_at(self.to_world(p)))
                     .filter(|t| Some(*t) != other)
+                    .filter(|t| {
+                        let (Some(e), Some(o)) = (edge, other_end) else { return true };
+                        let Some(kind) = e.link() else { return true };
+                        let (from, to) = if *end == 0 { (End::Node(*t), o) } else { (o, End::Node(*t)) };
+                        self.diagram.link_allowed(kind, from, to)
+                    })
                     .and_then(|t| self.diagram.node(t));
                 if let Some(t) = target {
                     painter.rect_stroke(self.rect_to_screen(t.rect()).expand(3.0), 2.0, Stroke::new(2.0, HOVER), StrokeKind::Outside);

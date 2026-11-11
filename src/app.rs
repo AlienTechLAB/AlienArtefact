@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use egui::{vec2, Color32, Event, Key, Modifiers, Pos2, Rect, Sense, Stroke, Ui, Vec2, ViewportCommand};
 
 use crate::canvas::Drag;
-use crate::model::{Clip, Diagram, EdgeStyle, Head, Id, LinePattern, PointerKind, ShapeKind};
+use crate::model::{Clip, Diagram, EdgeStyle, Head, Id, LinePattern, LinkKind, PointerKind, RelationKind, ShapeKind};
 use crate::render::{paint_edge, paint_shape};
 
 const MAX_UNDO: usize = 200;
@@ -35,12 +35,12 @@ pub struct App {
     title: String,
     clipboard: Option<Clip>,
     paste_count: u32,
-    status: String,
+    pub status: String,
     allow_close: bool,
     /// Fit the view once the canvas size is known (after opening a file).
     pub fit_pending: bool,
-    /// Active pointer tool: the next drag (or click) on the canvas draws this kind of pointer.
-    pub pointer_tool: Option<PointerKind>,
+    /// Active pointer/relation tool: the next drag (or click) on the canvas draws this kind of line.
+    pub link_tool: Option<LinkKind>,
     /// New pointers point to a const object.
     pub pointer_const: bool,
 }
@@ -72,7 +72,7 @@ impl Default for App {
             status: String::new(),
             allow_close: false,
             fit_pending: false,
-            pointer_tool: None,
+            link_tool: None,
             pointer_const: false,
         }
     }
@@ -377,7 +377,7 @@ impl App {
             }
         }
         if key(Modifiers::NONE, Key::Escape) {
-            if self.pointer_tool.take().is_none() {
+            if self.link_tool.take().is_none() {
                 self.selection.clear();
             }
         }
@@ -564,30 +564,58 @@ impl App {
         self.palette_section(ui, "Objects", &ShapeKind::OBJECTS);
         ui.add_space(8.0);
         self.pointer_palette(ui);
+        ui.add_space(8.0);
+        self.relation_palette(ui);
+        if self.link_tool.is_some() {
+            ui.add_space(4.0);
+            ui.weak("Drag from one object to another. Esc cancels.");
+        }
+    }
+
+    /// One palette tile showing a line style with a caption; returns true when clicked.
+    fn link_tile(&mut self, ui: &mut Ui, kind: LinkKind, caption: &str, hint: &str) {
+        let (rect, resp) = ui.allocate_exact_size(vec2(52.0, 44.0), Sense::click());
+        let resp = resp.on_hover_text(format!("{} ({hint})", kind.name()));
+        let active = self.link_tool == Some(kind);
+        if active {
+            ui.painter().rect(rect, 4.0, ui.visuals().selection.bg_fill, ui.visuals().selection.stroke, egui::StrokeKind::Inside);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(rect, 4.0, ui.visuals().widgets.hovered.bg_fill);
+        }
+        let col = ui.visuals().text_color();
+        let y = rect.top() + 14.0;
+        let pts = [Pos2::new(rect.left() + 6.0, y), Pos2::new(rect.right() - 6.0, y)];
+        let (pattern, start, end) = match kind {
+            LinkKind::Pointer(k) => k.look(),
+            LinkKind::Relation(k) => k.look(),
+        };
+        paint_edge(ui.painter(), &pts, col, 1.2, pattern, start, end, 0.6);
+        ui.painter().text(
+            Pos2::new(rect.center().x, rect.bottom() - 12.0),
+            egui::Align2::CENTER_CENTER,
+            caption,
+            egui::FontId::monospace(10.0),
+            col,
+        );
+        if resp.clicked() {
+            self.link_tool = if active { None } else { Some(kind) };
+        }
+    }
+
+    fn relation_palette(&mut self, ui: &mut Ui) {
+        ui.strong("Relations");
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            self.link_tile(ui, LinkKind::Relation(RelationKind::Related), "related", "click, then drag between two objects");
+            self.link_tile(ui, LinkKind::Relation(RelationKind::Implements), "impl", "click, then drag from a class to a trait");
+        });
     }
 
     fn pointer_palette(&mut self, ui: &mut Ui) {
         ui.strong("Pointers");
         ui.separator();
-        let tile = vec2(52.0, 44.0);
         ui.horizontal_wrapped(|ui| {
             for kind in PointerKind::ALL {
-                let (rect, resp) = ui.allocate_exact_size(tile, Sense::click());
-                let resp = resp.on_hover_text(format!(
-                    "{} (click, then drag from the owner to the pointed-to object)",
-                    kind.name()
-                ));
-                let active = self.pointer_tool == Some(kind);
-                if active {
-                    ui.painter().rect(rect, 4.0, ui.visuals().selection.bg_fill, ui.visuals().selection.stroke, egui::StrokeKind::Inside);
-                } else if resp.hovered() {
-                    ui.painter().rect_filled(rect, 4.0, ui.visuals().widgets.hovered.bg_fill);
-                }
-                let col = ui.visuals().text_color();
-                let y = rect.top() + 14.0;
-                let pts = [Pos2::new(rect.left() + 6.0, y), Pos2::new(rect.right() - 6.0, y)];
-                let (pattern, start, end) = kind.look();
-                paint_edge(ui.painter(), &pts, col, 1.2, pattern, start, end, 0.6);
                 let short = match kind {
                     PointerKind::Raw => "T*",
                     PointerKind::Reference => "T&",
@@ -595,23 +623,11 @@ impl App {
                     PointerKind::Shared => "shared",
                     PointerKind::Weak => "weak",
                 };
-                ui.painter().text(
-                    Pos2::new(rect.center().x, rect.bottom() - 12.0),
-                    egui::Align2::CENTER_CENTER,
-                    short,
-                    egui::FontId::monospace(10.0),
-                    col,
-                );
-                if resp.clicked() {
-                    self.pointer_tool = if active { None } else { Some(kind) };
-                }
+                self.link_tile(ui, LinkKind::Pointer(kind), short, "click, then drag from the owner to the pointed-to object");
             }
         });
         ui.checkbox(&mut self.pointer_const, "Points to const")
             .on_hover_text("New pointers point to a const object");
-        if self.pointer_tool.is_some() {
-            ui.weak("Drag from the owner to the pointed-to object. Esc cancels.");
-        }
     }
 
     fn palette_section(&mut self, ui: &mut Ui, title: &str, kinds: &[ShapeKind]) {
@@ -812,22 +828,44 @@ impl App {
     fn edge_format(&mut self, ui: &mut Ui, ids: &[Id]) {
         let before = self.diagram.edge(ids[0]).unwrap().clone();
         let mut e = before.clone();
-        let heading = match (ids.len(), e.pointer) {
-            (1, Some(_)) => "Pointer".to_owned(),
+        let heading = match (ids.len(), e.link()) {
+            (1, Some(LinkKind::Pointer(_))) => "Pointer".to_owned(),
+            (1, Some(LinkKind::Relation(_))) => "Relation".to_owned(),
             (1, None) => "Line".to_owned(),
             (n, _) => format!("{n} lines"),
         };
         ui.strong(heading);
         ui.separator();
+        // "Implements" is only offered when every selected line runs from a class to a trait.
+        let implements = LinkKind::Relation(RelationKind::Implements);
+        let implements_ok = ids.iter().all(|id| {
+            let l = self.diagram.edge(*id).unwrap();
+            self.diagram.link_allowed(implements, l.from, l.to)
+        });
         egui::Grid::new("edge_style").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            ui.label("Pointer");
-            egui::ComboBox::from_id_salt("edge_pointer")
-                .selected_text(e.pointer.map_or("Plain connector", |k| k.name()))
+            ui.label("Type");
+            let mut link = e.link();
+            egui::ComboBox::from_id_salt("edge_link")
+                .selected_text(link.map_or("Plain connector", |k| k.name()))
                 .show_ui(ui, |ui| {
                     for k in PointerKind::ALL {
-                        ui.selectable_value(&mut e.pointer, Some(k), k.name());
+                        ui.selectable_value(&mut link, Some(LinkKind::Pointer(k)), k.name());
+                    }
+                    ui.separator();
+                    for k in RelationKind::ALL {
+                        let kind = LinkKind::Relation(k);
+                        let enabled = kind != implements || implements_ok;
+                        ui.add_enabled_ui(enabled, |ui| {
+                            ui.selectable_value(&mut link, Some(kind), k.name())
+                                .on_disabled_hover_text("Only from a class to a trait");
+                        });
                     }
                 });
+            if link != e.link() {
+                if let Some(k) = link {
+                    e.set_link(k);
+                }
+            }
             ui.end_row();
             if e.pointer.is_some() {
                 ui.label("Target");
@@ -902,8 +940,9 @@ impl App {
             if e.end_head != before.end_head {
                 t.end_head = e.end_head;
             }
-            if e.pointer != before.pointer {
+            if e.pointer != before.pointer || e.relation != before.relation {
                 t.pointer = e.pointer;
+                t.relation = e.relation;
             }
             if e.const_target != before.const_target {
                 t.const_target = e.const_target;

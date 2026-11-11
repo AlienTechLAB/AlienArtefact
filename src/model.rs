@@ -294,10 +294,13 @@ pub enum Head {
     Diamond,
     /// Outlined diamond (shared ownership).
     HollowDiamond,
+    /// Outlined triangle (UML realization: "implements").
+    HollowArrow,
 }
 
 impl Head {
-    pub const ALL: [Head; 5] = [Head::None, Head::Arrow, Head::OpenArrow, Head::Diamond, Head::HollowDiamond];
+    pub const ALL: [Head; 6] =
+        [Head::None, Head::Arrow, Head::OpenArrow, Head::Diamond, Head::HollowDiamond, Head::HollowArrow];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -306,6 +309,7 @@ impl Head {
             Head::OpenArrow => "Open arrow",
             Head::Diamond => "Diamond",
             Head::HollowDiamond => "Hollow diamond",
+            Head::HollowArrow => "Hollow arrow",
         }
     }
 }
@@ -358,6 +362,50 @@ impl PointerKind {
     }
 }
 
+/// Non-pointer relations between objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RelationKind {
+    /// Loosely related (not a technical link), e.g. a config file and the struct loaded from it.
+    Related,
+    /// A class implements a trait. Only valid from a class to a trait.
+    Implements,
+}
+
+impl RelationKind {
+    pub const ALL: [RelationKind; 2] = [RelationKind::Related, RelationKind::Implements];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            RelationKind::Related => "Related",
+            RelationKind::Implements => "Implements",
+        }
+    }
+
+    /// Line pattern, source head, target head.
+    pub fn look(self) -> (LinePattern, Head, Head) {
+        match self {
+            RelationKind::Related => (LinePattern::Dotted, Head::None, Head::None),
+            RelationKind::Implements => (LinePattern::Dashed, Head::None, Head::HollowArrow),
+        }
+    }
+}
+
+/// What a typed line means: a pointer or a relation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkKind {
+    Pointer(PointerKind),
+    Relation(RelationKind),
+}
+
+impl LinkKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            LinkKind::Pointer(k) => k.name(),
+            LinkKind::Relation(k) => k.name(),
+        }
+    }
+}
+
 /// Fields from older file versions: read so those files still open, never written.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct LegacyEdge {
@@ -390,6 +438,9 @@ pub struct Edge {
     /// The pointed-to object is const.
     #[serde(default)]
     pub const_target: bool,
+    /// `Some` makes this line a relation (mutually exclusive with `pointer`).
+    #[serde(default)]
+    pub relation: Option<RelationKind>,
     pub style: EdgeStyle,
     #[serde(flatten, default)]
     pub legacy: LegacyEdge,
@@ -409,6 +460,7 @@ impl Edge {
             end_head: Head::None,
             pointer: None,
             const_target: false,
+            relation: None,
             style,
             legacy: LegacyEdge::default(),
         }
@@ -416,14 +468,36 @@ impl Edge {
 
     /// Effective line pattern and end decorations.
     pub fn look(&self) -> (LinePattern, Head, Head) {
-        match self.pointer {
-            Some(kind) => kind.look(),
+        match self.link() {
+            Some(LinkKind::Pointer(kind)) => kind.look(),
+            Some(LinkKind::Relation(kind)) => kind.look(),
             None => (self.pattern, self.start_head, self.end_head),
         }
     }
 
+    /// Pointer or relation type; `None` for a plain connector.
+    pub fn link(&self) -> Option<LinkKind> {
+        self.relation.map(LinkKind::Relation).or(self.pointer.map(LinkKind::Pointer))
+    }
+
+    pub fn set_link(&mut self, kind: LinkKind) {
+        match kind {
+            LinkKind::Pointer(k) => {
+                self.pointer = Some(k);
+                self.relation = None;
+            }
+            LinkKind::Relation(k) => {
+                self.relation = Some(k);
+                self.pointer = None;
+            }
+        }
+    }
+
     pub fn badge(&self) -> Option<String> {
-        self.pointer.map(|k| k.badge(self.const_target))
+        match self.link() {
+            Some(LinkKind::Pointer(k)) => Some(k.badge(self.const_target)),
+            _ => None,
+        }
     }
 }
 
@@ -481,13 +555,41 @@ impl Diagram {
     }
 
     /// Adds a straight pointer line.
+    #[cfg(test)]
     pub fn add_pointer(&mut self, from: End, to: End, kind: PointerKind, const_target: bool) -> Id {
+        self.add_link(from, to, LinkKind::Pointer(kind), const_target)
+    }
+
+    /// Adds a straight pointer or relation line. `const_target` only matters for pointers.
+    pub fn add_link(&mut self, from: End, to: End, kind: LinkKind, const_target: bool) -> Id {
         let id = self.alloc_id();
         let mut e = Edge::new(id, from, to, EdgeStyle::Straight);
-        e.pointer = Some(kind);
+        e.set_link(kind);
         e.const_target = const_target;
         self.edges.push(e);
         id
+    }
+
+    fn node_kind(&self, end: End) -> Option<ShapeKind> {
+        end.node().and_then(|id| self.node(id)).map(|n| n.kind)
+    }
+
+    /// Whether a line of this kind may start at `from` (checked before the target is known).
+    pub fn link_can_start(&self, kind: LinkKind, from: End) -> bool {
+        match kind {
+            LinkKind::Relation(RelationKind::Implements) => self.node_kind(from) == Some(ShapeKind::Class),
+            _ => true,
+        }
+    }
+
+    /// Whether a line of this kind may connect `from` to `to`.
+    pub fn link_allowed(&self, kind: LinkKind, from: End, to: End) -> bool {
+        match kind {
+            LinkKind::Relation(RelationKind::Implements) => {
+                self.node_kind(from) == Some(ShapeKind::Class) && self.node_kind(to) == Some(ShapeKind::Trait)
+            }
+            _ => true,
+        }
     }
 
     /// Converts fields from older file versions.
@@ -741,6 +843,10 @@ pub fn edge_geometry(pts: &[Pos2], len: f32, start: Head, end: Head) -> (Vec<Pos
         let base = tip - dir * len;
         let (points, fill, line_end) = match kind {
             Head::Arrow => (vec![tip, base + perp * w, base - perp * w], HeadFill::Solid, base),
+            Head::HollowArrow => {
+                let w = len * 0.55;
+                (vec![tip, base + perp * w, base - perp * w], HeadFill::Hollow, base)
+            }
             Head::OpenArrow => (vec![base + perp * w, tip, base - perp * w], HeadFill::Open, tip),
             Head::Diamond | Head::HollowDiamond => {
                 let back = tip - dir * len * 2.0;
@@ -1030,5 +1136,75 @@ mod trait_tests {
         let back: Diagram = serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
         assert_eq!(back, d);
         assert!(d.edge_path(&d.edges[0]).is_some());
+    }
+}
+
+#[cfg(test)]
+mod relation_tests {
+    use super::*;
+
+    const IMPL: LinkKind = LinkKind::Relation(RelationKind::Implements);
+    const RELATED: LinkKind = LinkKind::Relation(RelationKind::Related);
+
+    #[test]
+    fn implements_only_from_class_to_trait() {
+        let mut d = Diagram::default();
+        let c = End::Node(d.add_node(ShapeKind::Class, pos2(0.0, 0.0)));
+        let c2 = End::Node(d.add_node(ShapeKind::Class, pos2(300.0, 0.0)));
+        let t = End::Node(d.add_node(ShapeKind::Trait, pos2(0.0, 300.0)));
+        let free = End::point(pos2(500.0, 500.0));
+
+        assert!(d.link_allowed(IMPL, c, t));
+        assert!(!d.link_allowed(IMPL, t, c), "trait to class");
+        assert!(!d.link_allowed(IMPL, c, c2), "class to class");
+        assert!(!d.link_allowed(IMPL, c, free), "dangling end");
+        assert!(d.link_can_start(IMPL, c));
+        assert!(!d.link_can_start(IMPL, t));
+        assert!(!d.link_can_start(IMPL, free));
+
+        // Related and pointers connect anything.
+        assert!(d.link_allowed(RELATED, t, free));
+        assert!(d.link_allowed(LinkKind::Pointer(PointerKind::Raw), t, c));
+    }
+
+    #[test]
+    fn relation_looks_and_kind_switching() {
+        let mut d = Diagram::default();
+        let id = d.add_link(End::point(pos2(0.0, 0.0)), End::point(pos2(100.0, 0.0)), RELATED, true);
+        let e = d.edge_mut(id).unwrap();
+        assert_eq!(e.look(), (LinePattern::Dotted, Head::None, Head::None));
+        assert_eq!(e.badge(), None, "relations have no pointer badge");
+
+        e.set_link(LinkKind::Pointer(PointerKind::Shared));
+        assert_eq!((e.pointer, e.relation), (Some(PointerKind::Shared), None));
+        e.set_link(IMPL);
+        assert_eq!((e.pointer, e.relation), (None, Some(RelationKind::Implements)));
+        assert_eq!(e.look(), (LinePattern::Dashed, Head::None, Head::HollowArrow));
+
+        // Each pointer/relation kind looks different from every other.
+        let looks: Vec<_> = PointerKind::ALL
+            .iter()
+            .map(|k| k.look())
+            .chain(RelationKind::ALL.iter().map(|k| k.look()))
+            .collect();
+        for (i, a) in looks.iter().enumerate() {
+            assert!(!looks[i + 1..].contains(a));
+        }
+    }
+
+    #[test]
+    fn relation_field_round_trips_and_old_files_default_to_none() {
+        let mut d = Diagram::default();
+        let c = End::Node(d.add_node(ShapeKind::Class, pos2(0.0, 0.0)));
+        let t = End::Node(d.add_node(ShapeKind::Trait, pos2(0.0, 300.0)));
+        d.add_link(c, t, IMPL, false);
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains(r#""relation":"Implements""#), "{json}");
+        let back: Diagram = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, d);
+
+        let old = json.replace(r#","relation":"Implements""#, "");
+        let back: Diagram = serde_json::from_str(&old).unwrap();
+        assert_eq!(back.edges[0].relation, None);
     }
 }

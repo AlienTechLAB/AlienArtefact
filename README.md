@@ -19,6 +19,9 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
   | `weak_ptr` | dotted | hollow diamond | open arrow | `weak_ptr` |
 
   A const target shows in the badge (`const *`, `unique_ptr<const>`). The label (member name) sits near the target. Ends dropped on a shape attach to it; drag a selected pointer's end handles to re-attach. Release on the owner itself for a self-pointer (drawn as a loop off its right side). Every pointer has one of the five kinds; plain connectors (blue hover arrows) keep free pattern/arrowhead choice
+- Relations (palette section):
+  - Related: dotted line, no arrowheads. A loose, non-technical link (e.g. a config file and the struct loaded from it)
+  - Implements: dashed line with a hollow triangle at the trait. Only from a class to a trait; invalid drops are rejected
 - Routing: orthogonal or straight
 - Format panel: fill/line/font colors, line width, font size, position and size
 - Undo/redo, cut/copy/paste, duplicate, delete, bring to front / send to back
