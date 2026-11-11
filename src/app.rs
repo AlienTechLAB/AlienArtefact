@@ -94,7 +94,13 @@ impl eframe::App for App {
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::left("shapes").resizable(true).default_size(140.0).show(ui, |ui| self.palette(ui));
+        egui::Panel::left("shapes").resizable(true).default_size(150.0).show(ui, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                // A small indent under the section titles keeps two tiles per row.
+                ui.spacing_mut().indent = 4.0;
+                self.palette(ui);
+            });
+        });
         egui::Panel::right("format").resizable(true).default_size(320.0).size_range(220.0..=560.0).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| self.format_panel(ui));
         });
@@ -669,11 +675,8 @@ impl App {
     fn palette(&mut self, ui: &mut Ui) {
         ui.add_space(4.0);
         self.palette_section(ui, "Objects", &ShapeKind::OBJECTS);
-        ui.add_space(8.0);
         self.palette_section(ui, "Collections", &ShapeKind::COLLECTIONS);
-        ui.add_space(8.0);
         self.pointer_palette(ui);
-        ui.add_space(8.0);
         self.relation_palette(ui);
         if self.link_tool.is_some() {
             ui.add_space(4.0);
@@ -712,8 +715,10 @@ impl App {
     }
 
     fn relation_palette(&mut self, ui: &mut Ui) {
-        ui.strong("Relations");
-        ui.separator();
+        section(ui, "Relations", "palette.relations", |ui| self.relation_tiles(ui));
+    }
+
+    fn relation_tiles(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             self.link_tile(ui, LinkKind::Relation(RelationKind::Related), "related", "click, then drag between two objects");
             self.link_tile(ui, LinkKind::Relation(RelationKind::Implements), "impl", "click, then drag from a class to a trait");
@@ -733,8 +738,10 @@ impl App {
     }
 
     fn pointer_palette(&mut self, ui: &mut Ui) {
-        ui.strong("Pointers");
-        ui.separator();
+        section(ui, "Pointers", "palette.pointers", |ui| self.pointer_tiles(ui));
+    }
+
+    fn pointer_tiles(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             for kind in PointerKind::ALL {
                 let short = match kind {
@@ -752,8 +759,10 @@ impl App {
     }
 
     fn palette_section(&mut self, ui: &mut Ui, title: &str, kinds: &[ShapeKind]) {
-        ui.strong(title);
-        ui.separator();
+        section(ui, title, &format!("palette.{title}"), |ui| self.palette_tiles(ui, kinds));
+    }
+
+    fn palette_tiles(&mut self, ui: &mut Ui, kinds: &[ShapeKind]) {
         let tile = vec2(52.0, 44.0);
         ui.horizontal_wrapped(|ui| {
             for &kind in kinds {
@@ -819,19 +828,18 @@ impl App {
         let edge_ids: Vec<Id> = self.selection.iter().copied().filter(|id| self.diagram.edge(*id).is_some()).collect();
 
         if node_ids.is_empty() && edge_ids.is_empty() {
-            ui.strong("Diagram");
-            ui.separator();
-            ui.checkbox(&mut self.show_grid, "Grid");
-            ui.checkbox(&mut self.snap, "Snap to grid (hold Alt to bypass)");
-            ui.add_space(12.0);
-            ui.weak(
+            section(ui, "Diagram", "fmt.diagram", |ui| {
+                ui.checkbox(&mut self.show_grid, "Grid");
+                ui.checkbox(&mut self.snap, "Snap to grid (hold Alt to bypass)");
+            });
+            section(ui, "Tips", "fmt.tips", |ui| ui.weak(
                 "Tips:\n\
                  - Click or drag shapes from the left panel.\n\
                  - Pick a pointer type in the Pointers section, then drag from the owner to the pointed-to object. \
                  Drag a selected pointer's end handles to re-attach it.\n\
                  - Double-click an object or pointer to edit its name or label.\n\
                  - Ctrl+wheel zooms, wheel scrolls, middle/right-drag pans.",
-            );
+            ));
             return;
         }
 
@@ -846,23 +854,23 @@ impl App {
         }
 
         ui.add_space(8.0);
-        ui.strong("Arrange");
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui.button("To front").clicked() {
-                self.diagram.reorder(&self.selection, true);
-            }
-            if ui.button("To back").clicked() {
-                self.diagram.reorder(&self.selection, false);
-            }
-        });
-        ui.horizontal(|ui| {
-            if ui.button("Duplicate").clicked() {
-                self.duplicate();
-            }
-            if ui.button("Delete").clicked() {
-                self.delete_selected();
-            }
+        section(ui, "Arrange", "fmt.arrange", |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("To front").clicked() {
+                    self.diagram.reorder(&self.selection, true);
+                }
+                if ui.button("To back").clicked() {
+                    self.diagram.reorder(&self.selection, false);
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Duplicate").clicked() {
+                    self.duplicate();
+                }
+                if ui.button("Delete").clicked() {
+                    self.delete_selected();
+                }
+            });
         });
     }
 
@@ -881,38 +889,36 @@ impl App {
             .map(|t| t.text.clone());
 
         if single_collection {
-            ui.strong("Collection");
-            ui.separator();
-            egui::Grid::new("collection_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                ui.label("Kind");
-                egui::ComboBox::from_id_salt("collection_kind").selected_text(n.kind.name()).show_ui(ui, |ui| {
-                    for k in ShapeKind::COLLECTIONS {
-                        ui.selectable_value(&mut n.kind, k, k.name());
-                    }
-                });
-                ui.end_row();
-                if n.kind == ShapeKind::Dictionary {
-                    ui.label("Key");
-                    ui.add(egui::TextEdit::singleline(&mut n.key).hint_text("e.g. String").desired_width(f32::INFINITY));
+            section(ui, "Collection", "fmt.object", |ui| {
+                egui::Grid::new("collection_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    ui.label("Kind");
+                    egui::ComboBox::from_id_salt("collection_kind").selected_text(n.kind.name()).show_ui(ui, |ui| {
+                        for k in ShapeKind::COLLECTIONS {
+                            ui.selectable_value(&mut n.kind, k, k.name());
+                        }
+                    });
                     ui.end_row();
-                }
-                ui.label(if n.kind == ShapeKind::Dictionary { "Value" } else { "Element" });
-                match &element_from {
-                    Some(target) => {
-                        ui.label(format!("{target}  (from its pointer)"));
+                    if n.kind == ShapeKind::Dictionary {
+                        ui.label("Key");
+                        ui.add(egui::TextEdit::singleline(&mut n.key).hint_text("e.g. String").desired_width(f32::INFINITY));
+                        ui.end_row();
                     }
-                    None => {
-                        ui.add(egui::TextEdit::singleline(&mut n.text).hint_text("e.g. i32").desired_width(f32::INFINITY));
+                    ui.label(if n.kind == ShapeKind::Dictionary { "Value" } else { "Element" });
+                    match &element_from {
+                        Some(target) => {
+                            ui.label(format!("{target}  (from its pointer)"));
+                        }
+                        None => {
+                            ui.add(egui::TextEdit::singleline(&mut n.text).hint_text("e.g. i32").desired_width(f32::INFINITY));
+                        }
                     }
-                }
-                ui.end_row();
+                    ui.end_row();
+                });
+                ui.add_space(4.0);
+                ui.weak("Draw a pointer from the collection to an object to make that object the element type.");
             });
-            ui.add_space(4.0);
-            ui.weak("Draw a pointer from the collection to an object to make that object the element type.");
-            ui.add_space(12.0);
-            ui.strong("Style");
         } else if single_class {
-            ui.strong(match n.kind {
+            let title = match n.kind {
                 ShapeKind::Trait => "Trait",
                 ShapeKind::File => "File",
                 ShapeKind::Directory => "Directory",
@@ -920,103 +926,109 @@ impl App {
                 ShapeKind::External => "External type",
                 ShapeKind::Package => "Package",
                 _ => "Class",
-            });
-            ui.separator();
-            egui::Grid::new("class_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                ui.label("Name");
-                let hint = match n.kind {
-                    ShapeKind::External => "e.g. tokio::sync::Notify",
-                    ShapeKind::File => "e.g. config/settings.toml",
-                    ShapeKind::Directory => "e.g. data/<Table>/",
-                    _ => "",
-                };
-                ui.add(egui::TextEdit::singleline(&mut n.text).hint_text(hint).desired_width(f32::INFINITY));
-                ui.end_row();
-                if n.kind.is_object() {
-                    ui.label("Type params").on_hover_text("Generic parameters with bounds, e.g. R: Row");
-                    ui.add(egui::TextEdit::singleline(&mut n.type_params).hint_text("none").desired_width(f32::INFINITY));
+            };
+            section(ui, title, "fmt.object", |ui| {
+                egui::Grid::new("class_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    ui.label("Name");
+                    let hint = match n.kind {
+                        ShapeKind::External => "e.g. tokio::sync::Notify",
+                        ShapeKind::File => "e.g. config/settings.toml",
+                        ShapeKind::Directory => "e.g. data/<Table>/",
+                        _ => "",
+                    };
+                    ui.add(egui::TextEdit::singleline(&mut n.text).hint_text(hint).desired_width(f32::INFINITY));
                     ui.end_row();
-                }
-                if matches!(n.kind, ShapeKind::Class | ShapeKind::Enum) {
-                    ui.label("Scope").on_hover_text("How many values of this type a running program has");
-                    egui::ComboBox::from_id_salt("scope").selected_text(n.scope.name()).show_ui(ui, |ui| {
-                        for s in crate::model::Scope::ALL {
-                            ui.selectable_value(&mut n.scope, s, s.name());
-                        }
-                    });
-                    ui.end_row();
-                }
-                if n.kind == ShapeKind::Class {
-                    ui.label("Task").on_hover_text("An active object: runs on its own (a thread, timer or async task)");
-                    ui.horizontal(|ui| {
-                        let mut is_task = n.task.is_some();
-                        if ui.checkbox(&mut is_task, "").changed() {
-                            n.task = is_task.then(String::new);
-                        }
-                        if let Some(period) = &mut n.task {
-                            ui.add(egui::TextEdit::singleline(period).hint_text("every 1 s").desired_width(f32::INFINITY));
-                        }
-                    });
-                    ui.end_row();
-                }
-                if n.kind == ShapeKind::Enum {
-                    ui.label("Flags").on_hover_text("Variants are bit flags that combine");
-                    ui.checkbox(&mut n.flags, "");
-                    ui.end_row();
-                }
-                if n.kind.is_object() {
-                    ui.label("Generated").on_hover_text("Source produced by a tool, not written by hand");
-                    ui.checkbox(&mut n.generated, "");
-                    ui.end_row();
-                }
+                    if n.kind.is_object() {
+                        ui.label("Type params").on_hover_text("Generic parameters with bounds, e.g. R: Row");
+                        ui.add(egui::TextEdit::singleline(&mut n.type_params).hint_text("none").desired_width(f32::INFINITY));
+                        ui.end_row();
+                    }
+                    if matches!(n.kind, ShapeKind::Class | ShapeKind::Enum) {
+                        ui.label("Scope").on_hover_text("How many values of this type a running program has");
+                        egui::ComboBox::from_id_salt("scope").selected_text(n.scope.name()).show_ui(ui, |ui| {
+                            for s in crate::model::Scope::ALL {
+                                ui.selectable_value(&mut n.scope, s, s.name());
+                            }
+                        });
+                        ui.end_row();
+                    }
+                    if n.kind == ShapeKind::Class {
+                        ui.label("Task").on_hover_text("An active object: runs on its own (a thread, timer or async task)");
+                        ui.horizontal(|ui| {
+                            let mut is_task = n.task.is_some();
+                            if ui.checkbox(&mut is_task, "").changed() {
+                                n.task = is_task.then(String::new);
+                            }
+                            if let Some(period) = &mut n.task {
+                                ui.add(egui::TextEdit::singleline(period).hint_text("every 1 s").desired_width(f32::INFINITY));
+                            }
+                        });
+                        ui.end_row();
+                    }
+                    if n.kind == ShapeKind::Enum {
+                        ui.label("Flags").on_hover_text("Variants are bit flags that combine");
+                        ui.checkbox(&mut n.flags, "");
+                        ui.end_row();
+                    }
+                    if n.kind.is_object() {
+                        ui.label("Generated").on_hover_text("Source produced by a tool, not written by hand");
+                        ui.checkbox(&mut n.generated, "");
+                        ui.end_row();
+                    }
+                });
             });
             if n.kind.is_object() {
                 members_ui(ui, &mut n);
             }
-            ui.add_space(12.0);
-            ui.strong("Style");
-        } else {
-            ui.strong(if ids.len() == 1 { "Object".to_owned() } else { format!("{} objects", ids.len()) });
         }
-        ui.separator();
-        egui::Grid::new("node_style").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            ui.label("Fill");
-            ui.color_edit_button_srgba_unmultiplied(&mut n.fill);
-            ui.end_row();
-            ui.label("Line");
-            ui.color_edit_button_srgba_unmultiplied(&mut n.stroke);
-            ui.end_row();
-            ui.label("Line width");
-            ui.add(egui::DragValue::new(&mut n.stroke_width).range(0.0..=20.0).speed(0.1).suffix(" pt"));
-            ui.end_row();
-            ui.label("Font color");
-            ui.color_edit_button_srgba_unmultiplied(&mut n.text_color);
-            ui.end_row();
-            ui.label("Font size");
-            ui.add(egui::DragValue::new(&mut n.font_size).range(4.0..=96.0).speed(0.2).suffix(" pt"));
-            ui.end_row();
-        });
 
-        if ids.len() == 1 {
-            if !single_class && !single_collection {
-                ui.add_space(6.0);
-                ui.label("Text");
-                ui.add(egui::TextEdit::multiline(&mut n.text).desired_rows(2).desired_width(f32::INFINITY));
-            }
-            ui.add_space(6.0);
-            egui::Grid::new("node_geom").num_columns(4).spacing([6.0, 6.0]).show(ui, |ui| {
-                ui.label("X");
-                ui.add(egui::DragValue::new(&mut n.pos[0]));
-                ui.label("Y");
-                ui.add(egui::DragValue::new(&mut n.pos[1]));
+        let style_title = if single_class || single_collection {
+            "Style".to_owned()
+        } else if ids.len() == 1 {
+            "Object".to_owned()
+        } else {
+            format!("{} objects", ids.len())
+        };
+        section(ui, style_title, "fmt.style", |ui| {
+            egui::Grid::new("node_style").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                ui.label("Fill");
+                ui.color_edit_button_srgba_unmultiplied(&mut n.fill);
                 ui.end_row();
-                ui.label("W");
-                ui.add(egui::DragValue::new(&mut n.size[0]).range(10.0..=10000.0));
-                ui.label("H");
-                ui.add(egui::DragValue::new(&mut n.size[1]).range(10.0..=10000.0));
+                ui.label("Line");
+                ui.color_edit_button_srgba_unmultiplied(&mut n.stroke);
+                ui.end_row();
+                ui.label("Line width");
+                ui.add(egui::DragValue::new(&mut n.stroke_width).range(0.0..=20.0).speed(0.1).suffix(" pt"));
+                ui.end_row();
+                ui.label("Font color");
+                ui.color_edit_button_srgba_unmultiplied(&mut n.text_color);
+                ui.end_row();
+                ui.label("Font size");
+                ui.add(egui::DragValue::new(&mut n.font_size).range(4.0..=96.0).speed(0.2).suffix(" pt"));
                 ui.end_row();
             });
-        }
+
+            if ids.len() == 1 {
+                if !single_class && !single_collection {
+                    ui.add_space(6.0);
+                    ui.label("Text");
+                    ui.add(egui::TextEdit::multiline(&mut n.text).desired_rows(2).desired_width(f32::INFINITY));
+                }
+                ui.add_space(6.0);
+                egui::Grid::new("node_geom").num_columns(4).spacing([6.0, 6.0]).show(ui, |ui| {
+                    ui.label("X");
+                    ui.add(egui::DragValue::new(&mut n.pos[0]));
+                    ui.label("Y");
+                    ui.add(egui::DragValue::new(&mut n.pos[1]));
+                    ui.end_row();
+                    ui.label("W");
+                    ui.add(egui::DragValue::new(&mut n.size[0]).range(10.0..=10000.0));
+                    ui.label("H");
+                    ui.add(egui::DragValue::new(&mut n.size[1]).range(10.0..=10000.0));
+                    ui.end_row();
+                });
+            }
+        });
 
         if n == before {
             return;
@@ -1088,8 +1100,6 @@ impl App {
             (1, None) => "Line".to_owned(),
             (n, _) => format!("{n} lines"),
         };
-        ui.strong(heading);
-        ui.separator();
         // A relation is only offered when every selected line fits its rule (e.g. class -> trait).
         let relation_ok: Vec<bool> = RelationKind::ALL
             .iter()
@@ -1105,92 +1115,94 @@ impl App {
             let l = self.diagram.edge(*id).unwrap();
             self.diagram.link_allowed_for(Some(*id), LinkKind::Pointer(PointerKind::Raw), l.from, l.to)
         });
-        egui::Grid::new("edge_style").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            ui.label("Type");
-            let mut link = e.link();
-            egui::ComboBox::from_id_salt("edge_link")
-                .selected_text(link.map_or("Plain connector", |k| k.name()))
-                .show_ui(ui, |ui| {
-                    for k in PointerKind::ALL {
-                        ui.add_enabled_ui(pointer_ok, |ui| {
-                            ui.selectable_value(&mut link, Some(LinkKind::Pointer(k)), k.name())
-                                .on_disabled_hover_text(
-                                    "Not allowed here: a file at either end, or a collection that already has its element pointer",
-                                );
-                        });
+        section(ui, heading, "fmt.line", |ui| {
+            egui::Grid::new("edge_style").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                ui.label("Type");
+                let mut link = e.link();
+                egui::ComboBox::from_id_salt("edge_link")
+                    .selected_text(link.map_or("Plain connector", |k| k.name()))
+                    .show_ui(ui, |ui| {
+                        for k in PointerKind::ALL {
+                            ui.add_enabled_ui(pointer_ok, |ui| {
+                                ui.selectable_value(&mut link, Some(LinkKind::Pointer(k)), k.name())
+                                    .on_disabled_hover_text(
+                                        "Not allowed here: a file at either end, or a collection that already has its element pointer",
+                                    );
+                            });
+                        }
+                        ui.separator();
+                        for (k, ok) in RelationKind::ALL.into_iter().zip(&relation_ok) {
+                            ui.add_enabled_ui(*ok, |ui| {
+                                ui.selectable_value(&mut link, Some(LinkKind::Relation(k)), k.name())
+                                    .on_disabled_hover_text(k.rule());
+                            });
+                        }
+                    });
+                if link != e.link() {
+                    if let Some(k) = link {
+                        e.set_link(k);
                     }
-                    ui.separator();
-                    for (k, ok) in RelationKind::ALL.into_iter().zip(&relation_ok) {
-                        ui.add_enabled_ui(*ok, |ui| {
-                            ui.selectable_value(&mut link, Some(LinkKind::Relation(k)), k.name())
-                                .on_disabled_hover_text(k.rule());
-                        });
-                    }
-                });
-            if link != e.link() {
-                if let Some(k) = link {
-                    e.set_link(k);
                 }
-            }
-            ui.end_row();
-            if let Some(kind) = e.pointer {
-                ui.label("Target");
-                ui.checkbox(&mut e.const_target, "const");
                 ui.end_row();
-                ui.label("Lock").on_hover_text("What guards the pointed-to value: Arc<Mutex<T>>, Arc<RwLock<T>>");
-                egui::ComboBox::from_id_salt("edge_lock").selected_text(e.lock.name()).show_ui(ui, |ui| {
-                    for l in crate::model::Lock::ALL {
-                        ui.selectable_value(&mut e.lock, l, l.name());
-                    }
-                });
-                ui.end_row();
-                if kind.can_be_required() {
-                    ui.label("Never null").on_hover_text("Always set (shown as [1]); otherwise it may be empty");
-                    ui.checkbox(&mut e.required, "");
+                if let Some(kind) = e.pointer {
+                    ui.label("Target");
+                    ui.checkbox(&mut e.const_target, "const");
                     ui.end_row();
-                }
-            } else if e.relation.is_some() {
-            } else {
-                ui.label("Pattern");
-                egui::ComboBox::from_id_salt("edge_pattern").selected_text(e.pattern.name()).show_ui(ui, |ui| {
-                    for p in LinePattern::ALL {
-                        ui.selectable_value(&mut e.pattern, p, p.name());
-                    }
-                });
-                ui.end_row();
-                for (label, head, salt) in [("Start", &mut e.start_head, "start_head"), ("End", &mut e.end_head, "end_head")] {
-                    ui.label(label);
-                    egui::ComboBox::from_id_salt(salt).selected_text(head.name()).show_ui(ui, |ui| {
-                        for h in Head::ALL {
-                            ui.selectable_value(head, h, h.name());
+                    ui.label("Lock").on_hover_text("What guards the pointed-to value: Arc<Mutex<T>>, Arc<RwLock<T>>");
+                    egui::ComboBox::from_id_salt("edge_lock").selected_text(e.lock.name()).show_ui(ui, |ui| {
+                        for l in crate::model::Lock::ALL {
+                            ui.selectable_value(&mut e.lock, l, l.name());
                         }
                     });
                     ui.end_row();
+                    if kind.can_be_required() {
+                        ui.label("Never null").on_hover_text("Always set (shown as [1]); otherwise it may be empty");
+                        ui.checkbox(&mut e.required, "");
+                        ui.end_row();
+                    }
+                } else if e.relation.is_some() {
+                } else {
+                    ui.label("Pattern");
+                    egui::ComboBox::from_id_salt("edge_pattern").selected_text(e.pattern.name()).show_ui(ui, |ui| {
+                        for p in LinePattern::ALL {
+                            ui.selectable_value(&mut e.pattern, p, p.name());
+                        }
+                    });
+                    ui.end_row();
+                    for (label, head, salt) in [("Start", &mut e.start_head, "start_head"), ("End", &mut e.end_head, "end_head")] {
+                        ui.label(label);
+                        egui::ComboBox::from_id_salt(salt).selected_text(head.name()).show_ui(ui, |ui| {
+                            for h in Head::ALL {
+                                ui.selectable_value(head, h, h.name());
+                            }
+                        });
+                        ui.end_row();
+                    }
                 }
+                ui.label("Routing");
+                egui::ComboBox::from_id_salt("edge_style")
+                    .selected_text(match e.style {
+                        EdgeStyle::Orthogonal => "Orthogonal",
+                        EdgeStyle::Straight => "Straight",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut e.style, EdgeStyle::Orthogonal, "Orthogonal");
+                        ui.selectable_value(&mut e.style, EdgeStyle::Straight, "Straight");
+                    });
+                ui.end_row();
+                ui.label("Color");
+                ui.color_edit_button_srgba_unmultiplied(&mut e.color);
+                ui.end_row();
+                ui.label("Width");
+                ui.add(egui::DragValue::new(&mut e.width).range(0.5..=20.0).speed(0.1).suffix(" pt"));
+                ui.end_row();
+            });
+            if ids.len() == 1 {
+                ui.add_space(6.0);
+                ui.label(if e.pointer.is_some() { "Label (e.g. member name)" } else { "Label" });
+                ui.add(egui::TextEdit::singleline(&mut e.label).desired_width(f32::INFINITY));
             }
-            ui.label("Routing");
-            egui::ComboBox::from_id_salt("edge_style")
-                .selected_text(match e.style {
-                    EdgeStyle::Orthogonal => "Orthogonal",
-                    EdgeStyle::Straight => "Straight",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut e.style, EdgeStyle::Orthogonal, "Orthogonal");
-                    ui.selectable_value(&mut e.style, EdgeStyle::Straight, "Straight");
-                });
-            ui.end_row();
-            ui.label("Color");
-            ui.color_edit_button_srgba_unmultiplied(&mut e.color);
-            ui.end_row();
-            ui.label("Width");
-            ui.add(egui::DragValue::new(&mut e.width).range(0.5..=20.0).speed(0.1).suffix(" pt"));
-            ui.end_row();
         });
-        if ids.len() == 1 {
-            ui.add_space(6.0);
-            ui.label(if e.pointer.is_some() { "Label (e.g. member name)" } else { "Label" });
-            ui.add(egui::TextEdit::singleline(&mut e.label).desired_width(f32::INFINITY));
-        }
 
         if e == before {
             return;
@@ -1236,6 +1248,16 @@ impl App {
     }
 }
 
+/// A titled panel section that folds away when its title is clicked. Open by default; whether it
+/// is open is remembered (per `id`) for the rest of the session.
+fn section<R>(ui: &mut Ui, title: impl Into<String>, id: &str, add_contents: impl FnOnce(&mut Ui) -> R) -> Option<R> {
+    egui::CollapsingHeader::new(egui::RichText::new(title.into()).strong())
+        .id_salt(id)
+        .default_open(true)
+        .show(ui, add_contents)
+        .body_returned
+}
+
 /// Fields and Methods sections of the format panel for one class or trait.
 fn members_ui(ui: &mut Ui, n: &mut Node) {
     match n.kind {
@@ -1253,24 +1275,24 @@ enum RowAction {
 }
 
 fn member_section(ui: &mut Ui, n: &mut Node, kind: MemberKind, title: &str) {
+    let count = n.members.iter().filter(|m| m.kind == kind).count();
+    section(ui, format!("{title} ({count})"), &format!("fmt.members.{title}"), |ui| member_rows(ui, n, kind));
+}
+
+fn member_rows(ui: &mut Ui, n: &mut Node, kind: MemberKind) {
     let owner = n.kind;
     let in_trait = owner == ShapeKind::Trait;
-    ui.add_space(10.0);
     ui.horizontal(|ui| {
-        ui.strong(title);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let label = match kind {
-                MemberKind::Field => "+ Add field",
-                MemberKind::Method => "+ Add method",
-                MemberKind::Variant => "+ Add variant",
-            };
-            if ui.small_button(label).clicked() {
-                let m = Member::new(kind, owner, &n.members);
-                n.members.push(m);
-            }
-        });
+        let label = match kind {
+            MemberKind::Field => "+ Add field",
+            MemberKind::Method => "+ Add method",
+            MemberKind::Variant => "+ Add variant",
+        };
+        if ui.small_button(label).clicked() {
+            let m = Member::new(kind, owner, &n.members);
+            n.members.push(m);
+        }
     });
-    ui.separator();
 
     let rows: Vec<usize> = (0..n.members.len()).filter(|&i| n.members[i].kind == kind).collect();
     if rows.is_empty() {
