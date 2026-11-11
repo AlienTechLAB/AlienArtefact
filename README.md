@@ -4,10 +4,12 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 
 ## Features
 
+- UML: class/struct box with the name in a header compartment, editable in the Class section of the right panel
 - Shapes: rectangle, rounded rectangle, ellipse, diamond, triangle, hexagon, parallelogram, cylinder, text
 - Select (click, Shift+click, rubber band), move with grid snapping, resize via handles
 - Connectors: hover a shape and drag a blue arrow onto another shape (or onto empty canvas to create a connected copy); click an arrow to clone the shape in that direction
-- Orthogonal or straight connectors, arrowheads at either end, dashed lines, labels
+- Line tool: lines and arrows (Lines section of the palette); click a preset, then drag on the canvas. Ends dropped on a shape attach to it; drag a selected line's end handles to move or re-attach them
+- Line patterns: solid, dashed, dotted, dash-dot; orthogonal or straight routing; arrowheads at either end; labels
 - Format panel: fill/line/font colors, line width, font size, position and size
 - Undo/redo, cut/copy/paste, duplicate, delete, bring to front / send to back
 - Pan and zoom, fit to content
@@ -23,6 +25,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 | Zoom | Ctrl + mouse wheel |
 | Scroll | Mouse wheel (Shift for horizontal) |
 | Pan | Middle- or right-drag |
+| Draw a line / arrow | Click a preset in Lines, then drag on the canvas (Esc cancels) |
 | Disable snapping while dragging | Hold Alt |
 | Nudge | Arrow keys (Shift = 10 units) |
 | Undo / Redo | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) |
@@ -34,6 +37,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 
 ```sh
 cargo run
+cargo run -- path/to/diagram.json   # open a diagram on startup
 cargo test
 ```
 

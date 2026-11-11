@@ -8,7 +8,7 @@ use egui::{
 };
 
 use crate::app::App;
-use crate::model::{color, polyline_midpoint, Id, ShapeKind};
+use crate::model::{color, polyline_midpoint, End, Id, ShapeKind};
 use crate::render::{layout_centered, paint_edge, paint_shape, paint_text};
 
 pub const GRID: f32 = 10.0;
@@ -22,10 +22,13 @@ const HOVER: Color32 = Color32::from_rgb(41, 182, 242);
 
 pub enum Drag {
     None,
-    Move { start: Pos2, orig: Vec<(Id, Pos2)> },
+    /// Moves selected shapes and the free ends of selected lines.
+    Move { start: Pos2, orig: Vec<(Id, Pos2)>, edge_orig: Vec<(Id, End, End)> },
     Resize { id: Id, handle: usize, orig: Rect, start: Pos2 },
     Rubber { start: Pos2 },
     Connect { from: Id },
+    /// Dragging one end of a line (0 = start, 1 = end); dropping it on a shape attaches it.
+    Endpoint { id: Id, end: usize },
     Pan,
 }
 
@@ -121,6 +124,10 @@ impl App {
     pub fn canvas(&mut self, ui: &mut Ui) {
         let (rect, resp) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.canvas_rect = rect;
+        if self.fit_pending {
+            self.fit_pending = false;
+            self.fit_view();
+        }
         let pointer = ui.input(|i| i.pointer.latest_pos());
         let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
         self.snap_active = self.snap && !alt;
@@ -137,7 +144,12 @@ impl App {
         }
 
         if matches!(self.drag, Drag::None) {
-            self.hovered = pointer.filter(|p| rect.contains(*p)).and_then(|p| self.hover_target(p));
+            self.hovered = pointer
+                .filter(|p| rect.contains(*p) && self.line_tool.is_none())
+                .and_then(|p| self.hover_target(p));
+        }
+        if self.line_tool.is_some() && resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
 
         self.handle_input(ui, &resp, pointer, shift);
@@ -187,8 +199,41 @@ impl App {
         self.selection.insert(id);
     }
 
+    /// Screen positions of a line's two ends.
+    fn edge_ends_screen(&self, id: Id) -> Option<[Pos2; 2]> {
+        let path = self.diagram.edge(id).and_then(|e| self.diagram.edge_path(e))?;
+        Some([self.to_screen(path[0]), self.to_screen(*path.last()?)])
+    }
+
+    /// End of a line to attach at `w`: the shape under it, or a (snapped) free point.
+    fn end_at(&self, w: Pos2, exclude: Option<Id>) -> End {
+        match self.diagram.node_at(w).filter(|n| Some(*n) != exclude) {
+            Some(n) => End::Node(n),
+            None => End::point(self.snap_pos(w)),
+        }
+    }
+
     fn begin_drag(&mut self, p: Pos2, shift: bool) {
         let w = self.to_world(p);
+
+        // Line tool: start a new line here and drag its end.
+        if let Some(preset) = self.line_tool.take() {
+            let from = self.end_at(w, None);
+            let id = self.diagram.add_line(from, End::point(w), &preset);
+            self.select_only(id);
+            self.drag = Drag::Endpoint { id, end: 1 };
+            return;
+        }
+
+        // Endpoint handles of selected lines.
+        for &id in &self.selection {
+            if let Some(ends) = self.edge_ends_screen(id) {
+                if let Some(end) = ends.iter().position(|e| e.distance(p) <= HANDLE_HIT) {
+                    self.drag = Drag::Endpoint { id, end };
+                    return;
+                }
+            }
+        }
 
         if let Some(id) = self.single_selected_node() {
             let orig = self.diagram.node(id).unwrap().rect();
@@ -204,7 +249,8 @@ impl App {
             return;
         }
 
-        if let Some(id) = self.diagram.node_at(w) {
+        let hit = self.diagram.node_at(w).or_else(|| self.diagram.edge_at(w, EDGE_HIT / self.zoom));
+        if let Some(id) = hit {
             if !self.selection.contains(&id) {
                 if !shift {
                     self.selection.clear();
@@ -216,15 +262,12 @@ impl App {
                 .iter()
                 .filter_map(|id| self.diagram.node(*id).map(|n| (*id, n.rect().min)))
                 .collect();
-            self.drag = Drag::Move { start: w, orig };
-            return;
-        }
-
-        if let Some(id) = self.diagram.edge_at(w, EDGE_HIT / self.zoom) {
-            if !shift {
-                self.selection.clear();
-            }
-            self.selection.insert(id);
+            let edge_orig = self
+                .selection
+                .iter()
+                .filter_map(|id| self.diagram.edge(*id).map(|e| (*id, e.from, e.to)))
+                .collect();
+            self.drag = Drag::Move { start: w, orig, edge_orig };
             return;
         }
 
@@ -238,17 +281,42 @@ impl App {
         let w = self.to_world(p);
         let on = self.snap_active;
         match &self.drag {
-            Drag::Move { start, orig } => {
+            Drag::Move { start, orig, edge_orig } => {
                 let mut d = w - *start;
-                // Snap the first shape to the grid and move the rest by the same amount.
-                if let Some((_, o)) = orig.first() {
-                    let t = *o + d;
-                    d = pos2(snap(t.x, on), snap(t.y, on)) - *o;
+                // Snap the first shape (or free line end) to the grid and move the rest by the same amount.
+                let free_point = |end: &End| match end {
+                    End::Point(p) => Some(pos2(p[0], p[1])),
+                    End::Node(_) => None,
+                };
+                let reference = orig
+                    .first()
+                    .map(|(_, o)| *o)
+                    .or_else(|| edge_orig.iter().find_map(|(_, a, b)| free_point(a).or_else(|| free_point(b))));
+                if let Some(o) = reference {
+                    let t = o + d;
+                    d = pos2(snap(t.x, on), snap(t.y, on)) - o;
                 }
                 for (id, o) in orig {
                     if let Some(n) = self.diagram.node_mut(*id) {
                         n.pos = [o.x + d.x, o.y + d.y];
                     }
+                }
+                let shift_end = |end: End| match end {
+                    End::Point(p) => End::Point([p[0] + d.x, p[1] + d.y]),
+                    attached => attached,
+                };
+                for (id, a, b) in edge_orig {
+                    if let Some(e) = self.diagram.edge_mut(*id) {
+                        e.from = shift_end(*a);
+                        e.to = shift_end(*b);
+                    }
+                }
+            }
+            Drag::Endpoint { id, end } => {
+                let (id, end) = (*id, *end);
+                let p = End::point(pos2(snap(w.x, on), snap(w.y, on)));
+                if let Some(e) = self.diagram.edge_mut(id) {
+                    if end == 0 { e.from = p } else { e.to = p }
                 }
             }
             Drag::Resize { id, handle, orig, start } => {
@@ -280,6 +348,23 @@ impl App {
     fn end_drag(&mut self, p: Pos2) {
         let w = self.to_world(p);
         match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::Endpoint { id, end } => {
+                let Some(e) = self.diagram.edge(id) else { return };
+                let other = if end == 0 { e.to } else { e.from };
+                let new_end = self.end_at(w, other.node());
+                let e = self.diagram.edge_mut(id).unwrap();
+                if end == 0 { e.from = new_end } else { e.to = new_end }
+                // A line dragged to (almost) nothing gets a default length instead of vanishing.
+                if let Some(path) = self.diagram.edge(id).and_then(|e| self.diagram.edge_path(e)) {
+                    if path[0].distance(path[path.len() - 1]) < 5.0 {
+                        if let End::Point(p) = new_end {
+                            let e = self.diagram.edge_mut(id).unwrap();
+                            let moved = End::Point([p[0] + 120.0, p[1]]);
+                            if end == 0 { e.from = moved } else { e.to = moved }
+                        }
+                    }
+                }
+            }
             Drag::Rubber { start } => {
                 let r = Rect::from_two_pos(start, w);
                 for n in &self.diagram.nodes {
@@ -318,6 +403,16 @@ impl App {
     }
 
     fn on_click(&mut self, p: Pos2, shift: bool) {
+        // Line tool + click (no drag): place a default-length horizontal line.
+        if let Some(preset) = self.line_tool.take() {
+            let w = self.to_world(p);
+            let from = self.end_at(w, None);
+            let start = self.diagram.end_center(from).unwrap_or(w);
+            let to = End::point(self.snap_pos(start + vec2(120.0, 0.0)));
+            let id = self.diagram.add_line(from, to, &preset);
+            self.select_only(id);
+            return;
+        }
         if let Some((id, dir)) = self.arrow_hit(p) {
             self.clone_towards(id, dir);
             return;
@@ -415,9 +510,11 @@ impl App {
 
         for n in &self.diagram.nodes {
             let sr = self.rect_to_screen(n.rect());
-            paint_shape(painter, n.kind, sr, color(n.fill), Stroke::new(n.stroke_width * z, color(n.stroke)), z);
+            let stroke = Stroke::new(n.stroke_width * z, color(n.stroke));
+            paint_shape(painter, n.kind, sr, color(n.fill), stroke, z, n.font_size * z);
             if self.editing != Some(n.id) {
-                paint_text(painter, sr, &n.text, n.font_size * z, color(n.text_color));
+                let tr = self.rect_to_screen(n.text_rect());
+                paint_text(painter, tr, &n.text, n.font_size * z, color(n.text_color));
             }
         }
 
@@ -427,7 +524,7 @@ impl App {
             if self.selection.contains(&e.id) {
                 painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + 6.0, SEL.gamma_multiply(0.25))));
             }
-            paint_edge(painter, &sp, color(e.color), e.width * z, e.dashed, e.start_arrow, e.end_arrow, z);
+            paint_edge(painter, &sp, color(e.color), e.width * z, e.pattern, e.start_arrow, e.end_arrow, z);
             if !e.label.is_empty() && self.editing != Some(e.id) {
                 let mid = polyline_midpoint(&sp);
                 let galley = layout_centered(painter, &e.label, 11.0 * z, color(e.color), f32::INFINITY);
@@ -469,6 +566,17 @@ impl App {
         }
 
         match &self.drag {
+            Drag::Endpoint { id, end } => {
+                // Highlight the shape the end would attach to.
+                let other = self.diagram.edge(*id).and_then(|e| if *end == 0 { e.to } else { e.from }.node());
+                let target = pointer
+                    .and_then(|p| self.diagram.node_at(self.to_world(p)))
+                    .filter(|t| Some(*t) != other)
+                    .and_then(|t| self.diagram.node(t));
+                if let Some(t) = target {
+                    painter.rect_stroke(self.rect_to_screen(t.rect()).expand(3.0), 2.0, Stroke::new(2.0, HOVER), StrokeKind::Outside);
+                }
+            }
             Drag::Connect { from } => {
                 if let (Some(p), Some(src)) = (pointer, self.diagram.node(*from)) {
                     let w = self.to_world(p);
@@ -497,19 +605,20 @@ impl App {
         let (Some(kind), Some(p)) = (self.palette_drag, pointer) else { return };
         let painter = ui.ctx().layer_painter(LayerId::new(Order::Foreground, EguiId::unique("palette_ghost")));
         let r = Rect::from_center_size(p, kind.default_size() * self.zoom);
-        paint_shape(&painter, kind, r, SEL.gamma_multiply(0.08), Stroke::new(1.0, SEL), self.zoom);
+        paint_shape(&painter, kind, r, SEL.gamma_multiply(0.08), Stroke::new(1.0, SEL), self.zoom, 12.0 * self.zoom);
     }
 
     fn text_editor(&mut self, ui: &mut Ui) {
         let Some(id) = self.editing else { return };
         let z = self.zoom;
-        let (rect, font_size) = if let Some(n) = self.diagram.node(id) {
-            let sr = self.rect_to_screen(n.rect());
+        let (rect, font_size, single_line) = if let Some(n) = self.diagram.node(id) {
+            let sr = self.rect_to_screen(n.text_rect());
             let h = (n.font_size * z * 1.6).max(20.0);
-            (Rect::from_center_size(sr.center(), vec2(sr.width().max(60.0), sr.height().max(h))), n.font_size * z)
+            let rect = Rect::from_center_size(sr.center(), vec2(sr.width().max(60.0), sr.height().max(h)));
+            (rect, n.font_size * z, n.kind == ShapeKind::Class)
         } else if let Some(path) = self.diagram.edge(id).and_then(|e| self.diagram.edge_path(e)) {
             let sp: Vec<Pos2> = path.iter().map(|p| self.to_screen(*p)).collect();
-            (Rect::from_center_size(polyline_midpoint(&sp), vec2(160.0, 28.0)), 11.0 * z)
+            (Rect::from_center_size(polyline_midpoint(&sp), vec2(160.0, 28.0)), 11.0 * z, false)
         } else {
             self.editing = None;
             return;
@@ -520,7 +629,9 @@ impl App {
         } else {
             &mut self.diagram.edge_mut(id).unwrap().label
         };
-        let edit = egui::TextEdit::multiline(text)
+        // Class names are one line, so Enter finishes editing.
+        let edit = if single_line { egui::TextEdit::singleline(text) } else { egui::TextEdit::multiline(text) };
+        let edit = edit
             .font(FontId::proportional(font_size.max(8.0)))
             .align(egui::Align2::CENTER_CENTER)
             .desired_width(rect.width() - 8.0)

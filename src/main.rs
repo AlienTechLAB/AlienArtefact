@@ -36,7 +36,12 @@ fn main() -> eframe::Result {
             cc.egui_ctx.set_theme(egui::Theme::Light);
             // Ctrl +/- should not scale the whole UI.
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-            Ok(Box::new(app::App::default()))
+            let mut app = app::App::default();
+            // Optional diagram file to open: `architect_ai diagram.json`
+            if let Some(path) = std::env::args_os().nth(1) {
+                app.open_path(path.into());
+            }
+            Ok(Box::new(app))
         }),
     )
 }

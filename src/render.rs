@@ -5,10 +5,26 @@ use egui::{
     Stroke, StrokeKind,
 };
 
-use crate::model::{arrow_geometry, outline, ShapeKind};
+use crate::model::{arrow_geometry, class_header_height, outline, LinePattern, ShapeKind};
 
-pub fn paint_shape(painter: &Painter, kind: ShapeKind, r: Rect, fill: Color32, stroke: Stroke, zoom: f32) {
+/// `font_px` is the shape's font size in screen pixels (sizes the class name compartment).
+pub fn paint_shape(
+    painter: &Painter,
+    kind: ShapeKind,
+    r: Rect,
+    fill: Color32,
+    stroke: Stroke,
+    zoom: f32,
+    font_px: f32,
+) {
     match kind {
+        ShapeKind::Class => {
+            painter.rect(r, 0.0, fill, stroke, StrokeKind::Middle);
+            let y = r.top() + class_header_height(font_px, r.height());
+            if y < r.bottom() {
+                painter.line_segment([pos2(r.left(), y), pos2(r.right(), y)], stroke);
+            }
+        }
         ShapeKind::Rectangle | ShapeKind::Text => {
             painter.rect(r, 0.0, fill, stroke, StrokeKind::Middle);
         }
@@ -75,17 +91,19 @@ pub fn paint_edge(
     pts: &[Pos2],
     color: Color32,
     width: f32,
-    dashed: bool,
+    pattern: LinePattern,
     start_arrow: bool,
     end_arrow: bool,
     zoom: f32,
 ) {
     let (line, heads) = arrow_geometry(pts, 10.0 * zoom + width, start_arrow, end_arrow);
     let stroke = Stroke::new(width, color);
-    if dashed {
-        painter.extend(Shape::dashed_line(&line, stroke, 6.0 * zoom, 4.0 * zoom));
-    } else {
+    // Dash lengths follow the line width but never shrink below a visible size when zoomed out.
+    let (dashes, gaps) = pattern.dashes(width.max(zoom));
+    if dashes.is_empty() {
         painter.add(Shape::line(line, stroke));
+    } else {
+        painter.extend(Shape::dashed_line_with_offset(&line, stroke, &dashes, &gaps, 0.0));
     }
     for h in heads {
         painter.add(Shape::convex_polygon(h.to_vec(), color, Stroke::NONE));

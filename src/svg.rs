@@ -81,6 +81,28 @@ pub fn export(d: &Diagram) -> String {
                     r.height()
                 );
             }
+            ShapeKind::Class => {
+                let _ = writeln!(
+                    out,
+                    r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" {paint}/>"#,
+                    r.min.x,
+                    r.min.y,
+                    r.width(),
+                    r.height()
+                );
+                let y = n.text_rect().bottom();
+                if y < r.bottom() {
+                    let _ = writeln!(
+                        out,
+                        r#"<line x1="{:.1}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="{}" stroke-opacity="{}" stroke-width="{}"/>"#,
+                        r.left(),
+                        r.right(),
+                        hex(n.stroke),
+                        alpha(n.stroke),
+                        n.stroke_width
+                    );
+                }
+            }
             ShapeKind::Ellipse => {
                 let c = r.center();
                 let _ = writeln!(
@@ -112,13 +134,19 @@ pub fn export(d: &Diagram) -> String {
                 }
             }
         }
-        text_block(&mut out, r.center(), &n.text, n.font_size, n.text_color);
+        text_block(&mut out, n.text_rect().center(), &n.text, n.font_size, n.text_color);
     }
 
     for e in &d.edges {
         let Some(path) = d.edge_path(e) else { continue };
         let (line, heads) = arrow_geometry(&path, 10.0 + e.width, e.start_arrow, e.end_arrow);
-        let dash = if e.dashed { r#" stroke-dasharray="6 4""# } else { "" };
+        let (dashes, gaps) = e.pattern.dashes(e.width);
+        let dash = if dashes.is_empty() {
+            String::new()
+        } else {
+            let arr: Vec<String> = dashes.iter().zip(&gaps).flat_map(|(d, g)| [d.to_string(), g.to_string()]).collect();
+            format!(r#" stroke-dasharray="{}""#, arr.join(" "))
+        };
         let _ = writeln!(
             out,
             r#"<polyline points="{}" fill="none" stroke="{}" stroke-opacity="{}" stroke-width="{}"{dash}/>"#,

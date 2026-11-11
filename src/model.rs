@@ -29,9 +29,20 @@ pub enum ShapeKind {
     Parallelogram,
     Cylinder,
     Text,
+    /// UML-style class/struct box: name in a header compartment, body below.
+    Class,
+}
+
+/// Height of a class box's name compartment, for a given font size (same units as `font_size`).
+pub fn class_header_height(font_size: f32, box_height: f32) -> f32 {
+    (font_size * 2.2).min(box_height)
 }
 
 impl ShapeKind {
+    /// Shapes in the "UML" palette section.
+    pub const UML: [ShapeKind; 1] = [ShapeKind::Class];
+
+    /// Shapes in the "General" palette section.
     pub const ALL: [ShapeKind; 9] = [
         ShapeKind::Rectangle,
         ShapeKind::Rounded,
@@ -55,7 +66,13 @@ impl ShapeKind {
             ShapeKind::Parallelogram => "Parallelogram",
             ShapeKind::Cylinder => "Cylinder",
             ShapeKind::Text => "Text",
+            ShapeKind::Class => "Class / struct",
         }
+    }
+
+    /// Every shape kind, for pickers.
+    pub fn every() -> impl Iterator<Item = ShapeKind> {
+        Self::ALL.into_iter().chain(Self::UML)
     }
 
     pub fn default_size(self) -> Vec2 {
@@ -66,6 +83,7 @@ impl ShapeKind {
             ShapeKind::Hexagon => vec2(120.0, 80.0),
             ShapeKind::Cylinder => vec2(60.0, 80.0),
             ShapeKind::Text => vec2(80.0, 30.0),
+            ShapeKind::Class => vec2(160.0, 100.0),
             _ => vec2(120.0, 60.0),
         }
     }
@@ -95,7 +113,11 @@ impl Node {
             kind,
             pos: [min.x, min.y],
             size: [size.x, size.y],
-            text: if is_text { "Text".into() } else { String::new() },
+            text: match kind {
+                ShapeKind::Text => "Text".into(),
+                ShapeKind::Class => "ClassName".into(),
+                _ => String::new(),
+            },
             fill: if is_text { NONE } else { WHITE },
             stroke: if is_text { NONE } else { BLACK },
             stroke_width: 1.0,
@@ -111,6 +133,16 @@ impl Node {
     pub fn set_rect(&mut self, r: Rect) {
         self.pos = [r.min.x, r.min.y];
         self.size = [r.width(), r.height()];
+    }
+
+    /// Area where the shape's text is drawn: the name compartment for classes, otherwise the whole shape.
+    pub fn text_rect(&self) -> Rect {
+        let r = self.rect();
+        if self.kind == ShapeKind::Class {
+            Rect::from_min_size(r.min, vec2(r.width(), class_header_height(self.font_size, r.height())))
+        } else {
+            r
+        }
     }
 
     /// Point on the shape outline in the direction of `toward`, as seen from the center.
@@ -179,19 +211,95 @@ pub enum EdgeStyle {
     Straight,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LinePattern {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+    DashDot,
+}
+
+impl LinePattern {
+    pub const ALL: [LinePattern; 4] = [LinePattern::Solid, LinePattern::Dashed, LinePattern::Dotted, LinePattern::DashDot];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LinePattern::Solid => "Solid",
+            LinePattern::Dashed => "Dashed",
+            LinePattern::Dotted => "Dotted",
+            LinePattern::DashDot => "Dash-dot",
+        }
+    }
+
+    /// Alternating dash and gap lengths for a line of width `w` (empty for solid).
+    pub fn dashes(self, w: f32) -> (Vec<f32>, Vec<f32>) {
+        let w = w.max(1.0);
+        match self {
+            LinePattern::Solid => (vec![], vec![]),
+            LinePattern::Dashed => (vec![6.0 * w], vec![4.0 * w]),
+            LinePattern::Dotted => (vec![w], vec![2.0 * w]),
+            LinePattern::DashDot => (vec![8.0 * w, w], vec![3.0 * w, 3.0 * w]),
+        }
+    }
+}
+
+/// One end of a line: attached to a shape, or a free point on the canvas.
+/// Untagged so a node end serializes as a plain id and a free end as `[x, y]`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum End {
+    Node(Id),
+    Point([f32; 2]),
+}
+
+impl End {
+    pub fn point(p: Pos2) -> Self {
+        End::Point([p.x, p.y])
+    }
+
+    pub fn node(self) -> Option<Id> {
+        match self {
+            End::Node(id) => Some(id),
+            End::Point(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Edge {
     pub id: Id,
-    pub from: Id,
-    pub to: Id,
+    pub from: End,
+    pub to: End,
     pub label: String,
     pub color: Rgba,
     pub width: f32,
+    #[serde(default)]
+    pub pattern: LinePattern,
+    /// Pre-pattern files stored `dashed: true`; read it so they still open, never write it.
+    #[serde(default, skip_serializing)]
     pub dashed: bool,
     pub start_arrow: bool,
     pub end_arrow: bool,
     pub style: EdgeStyle,
 }
+
+/// Line presets offered in the palette.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LinePreset {
+    pub name: &'static str,
+    pub start_arrow: bool,
+    pub end_arrow: bool,
+    pub pattern: LinePattern,
+}
+
+pub const LINE_PRESETS: [LinePreset; 5] = [
+    LinePreset { name: "Line", start_arrow: false, end_arrow: false, pattern: LinePattern::Solid },
+    LinePreset { name: "Arrow", start_arrow: false, end_arrow: true, pattern: LinePattern::Solid },
+    LinePreset { name: "Double arrow", start_arrow: true, end_arrow: true, pattern: LinePattern::Solid },
+    LinePreset { name: "Dashed arrow", start_arrow: false, end_arrow: true, pattern: LinePattern::Dashed },
+    LinePreset { name: "Dotted line", start_arrow: false, end_arrow: false, pattern: LinePattern::Dotted },
+];
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Diagram {
@@ -237,15 +345,17 @@ impl Diagram {
         id
     }
 
+    /// Adds an orthogonal arrow connector between two shapes.
     pub fn add_edge(&mut self, from: Id, to: Id) -> Id {
         let id = self.alloc_id();
         self.edges.push(Edge {
             id,
-            from,
-            to,
+            from: End::Node(from),
+            to: End::Node(to),
             label: String::new(),
             color: BLACK,
             width: 1.0,
+            pattern: LinePattern::Solid,
             dashed: false,
             start_arrow: false,
             end_arrow: true,
@@ -254,11 +364,55 @@ impl Diagram {
         id
     }
 
+    /// Adds a straight line from a preset.
+    pub fn add_line(&mut self, from: End, to: End, preset: &LinePreset) -> Id {
+        let id = self.alloc_id();
+        self.edges.push(Edge {
+            id,
+            from,
+            to,
+            label: String::new(),
+            color: BLACK,
+            width: 1.0,
+            pattern: preset.pattern,
+            dashed: false,
+            start_arrow: preset.start_arrow,
+            end_arrow: preset.end_arrow,
+            style: EdgeStyle::Straight,
+        });
+        id
+    }
+
+    /// Converts fields from older file versions.
+    pub fn migrate(&mut self) {
+        for e in &mut self.edges {
+            if std::mem::take(&mut e.dashed) {
+                e.pattern = LinePattern::Dashed;
+            }
+        }
+    }
+
     /// Removes nodes/edges with the given ids, plus edges attached to removed nodes.
     pub fn remove(&mut self, ids: &BTreeSet<Id>) {
         self.nodes.retain(|n| !ids.contains(&n.id));
-        self.edges
-            .retain(|e| !ids.contains(&e.id) && !ids.contains(&e.from) && !ids.contains(&e.to));
+        let attached = |end: End| end.node().is_some_and(|n| ids.contains(&n));
+        self.edges.retain(|e| !ids.contains(&e.id) && !attached(e.from) && !attached(e.to));
+    }
+
+    /// Reference point of a line end: shape center or the free point.
+    pub fn end_center(&self, end: End) -> Option<Pos2> {
+        match end {
+            End::Node(id) => self.node(id).map(|n| n.rect().center()),
+            End::Point(p) => Some(pos2(p[0], p[1])),
+        }
+    }
+
+    /// Where a line end touches its shape when aimed at `toward` (the free point itself if unattached).
+    fn end_boundary(&self, end: End, toward: Pos2) -> Option<Pos2> {
+        match end {
+            End::Node(id) => self.node(id).map(|n| n.boundary_point(toward)),
+            End::Point(p) => Some(pos2(p[0], p[1])),
+        }
     }
 
     /// Topmost node containing `p`.
@@ -280,18 +434,18 @@ impl Diagram {
 
     /// Route of an edge, from the source outline to the target outline.
     pub fn edge_path(&self, e: &Edge) -> Option<Vec<Pos2>> {
-        let a = self.node(e.from)?;
-        let b = self.node(e.to)?;
-        let (ca, cb) = (a.rect().center(), b.rect().center());
+        let ca = self.end_center(e.from)?;
+        let cb = self.end_center(e.to)?;
+        let (a, b) = (e.from, e.to);
         Some(match e.style {
-            EdgeStyle::Straight => vec![a.boundary_point(cb), b.boundary_point(ca)],
+            EdgeStyle::Straight => vec![self.end_boundary(a, cb)?, self.end_boundary(b, ca)?],
             EdgeStyle::Orthogonal => {
                 const FAR: f32 = 1e5;
                 let d = cb - ca;
                 if d.x.abs() >= d.y.abs() {
                     let sx = if d.x >= 0.0 { 1.0 } else { -1.0 };
-                    let s = a.boundary_point(ca + vec2(sx * FAR, 0.0));
-                    let t = b.boundary_point(cb - vec2(sx * FAR, 0.0));
+                    let s = self.end_boundary(a, ca + vec2(sx * FAR, 0.0))?;
+                    let t = self.end_boundary(b, cb - vec2(sx * FAR, 0.0))?;
                     if (s.y - t.y).abs() < 0.5 {
                         vec![s, t]
                     } else {
@@ -300,8 +454,8 @@ impl Diagram {
                     }
                 } else {
                     let sy = if d.y >= 0.0 { 1.0 } else { -1.0 };
-                    let s = a.boundary_point(ca + vec2(0.0, sy * FAR));
-                    let t = b.boundary_point(cb - vec2(0.0, sy * FAR));
+                    let s = self.end_boundary(a, ca + vec2(0.0, sy * FAR))?;
+                    let t = self.end_boundary(b, cb - vec2(0.0, sy * FAR))?;
                     if (s.x - t.x).abs() < 0.5 {
                         vec![s, t]
                     } else {
@@ -314,7 +468,13 @@ impl Diagram {
     }
 
     pub fn bounds(&self) -> Option<Rect> {
-        let mut it = self.nodes.iter().map(|n| n.rect());
+        let points = self
+            .edges
+            .iter()
+            .filter_map(|e| self.edge_path(e))
+            .flatten()
+            .map(|p| Rect::from_min_max(p, p));
+        let mut it = self.nodes.iter().map(|n| n.rect()).chain(points);
         let first = it.next()?;
         Some(it.fold(first, |a, b| a.union(b)))
     }
@@ -333,15 +493,18 @@ impl Diagram {
         go(&mut self.edges, |e| ids.contains(&e.id), front);
     }
 
-    /// Selected nodes plus the edges that run between them.
+    /// Selected nodes, the connectors between them, and selected lines whose attached shapes are
+    /// also selected (or that are not attached at all).
     pub fn copy_subset(&self, ids: &BTreeSet<Id>) -> Clip {
+        let ends_inside = |e: &Edge| [e.from, e.to].iter().all(|end| end.node().is_none_or(|n| ids.contains(&n)));
+        let attached = |e: &Edge| e.from.node().is_some() || e.to.node().is_some();
         Clip {
             architect_ai_clip: 1,
             nodes: self.nodes.iter().filter(|n| ids.contains(&n.id)).cloned().collect(),
             edges: self
                 .edges
                 .iter()
-                .filter(|e| ids.contains(&e.from) && ids.contains(&e.to))
+                .filter(|e| ends_inside(e) && (ids.contains(&e.id) || attached(e)))
                 .cloned()
                 .collect(),
         }
@@ -361,15 +524,21 @@ impl Diagram {
             new.insert(id);
             self.nodes.push(n);
         }
-        for e in &clip.edges {
-            if let (Some(&from), Some(&to)) = (map.get(&e.from), map.get(&e.to)) {
-                let mut e = e.clone();
-                e.id = self.alloc_id();
-                e.from = from;
-                e.to = to;
-                new.insert(e.id);
-                self.edges.push(e);
+        let remap = |end: End| -> Option<End> {
+            match end {
+                End::Node(id) => map.get(&id).map(|&n| End::Node(n)),
+                End::Point(p) => Some(End::Point([p[0] + offset.x, p[1] + offset.y])),
             }
+        };
+        let edges: Vec<Edge> = clip
+            .edges
+            .iter()
+            .filter_map(|e| Some(Edge { from: remap(e.from)?, to: remap(e.to)?, ..e.clone() }))
+            .collect();
+        for mut e in edges {
+            e.id = self.alloc_id();
+            new.insert(e.id);
+            self.edges.push(e);
         }
         new
     }
@@ -485,10 +654,81 @@ mod tests {
         assert_eq!(new.len(), 3);
         assert_eq!(d.nodes.len(), 4);
         let pasted_edge = d.edges.last().unwrap();
-        assert!(new.contains(&pasted_edge.from) && new.contains(&pasted_edge.to));
+        assert!(new.contains(&pasted_edge.from.node().unwrap()) && new.contains(&pasted_edge.to.node().unwrap()));
 
         d.remove(&[a].into_iter().collect());
         assert_eq!(d.nodes.len(), 3);
         assert_eq!(d.edges.len(), 1, "edge attached to the removed node goes too");
+    }
+}
+
+#[cfg(test)]
+mod class_tests {
+    use super::*;
+
+    #[test]
+    fn class_name_sits_in_header() {
+        let n = Node::new(1, ShapeKind::Class, pos2(0.0, 0.0));
+        assert_eq!(n.text, "ClassName");
+        let (r, t) = (n.rect(), n.text_rect());
+        assert_eq!(t.top(), r.top());
+        assert!(t.height() < r.height());
+        assert_eq!(t.width(), r.width());
+    }
+}
+
+#[cfg(test)]
+mod line_tests {
+    use super::*;
+
+    #[test]
+    fn free_line_path_and_attach() {
+        let mut d = Diagram::default();
+        let n = d.add_node(ShapeKind::Rectangle, pos2(0.0, 0.0)); // 120x60 around origin
+        let free = d.add_line(End::point(pos2(200.0, 0.0)), End::point(pos2(300.0, 50.0)), &LINE_PRESETS[1]);
+        let path = d.edge_path(d.edge(free).unwrap()).unwrap();
+        assert_eq!(path, vec![pos2(200.0, 0.0), pos2(300.0, 50.0)]);
+
+        // Half-attached: starts at the shape's outline, aimed at the free end.
+        let half = d.add_line(End::Node(n), End::point(pos2(200.0, 0.0)), &LINE_PRESETS[0]);
+        let path = d.edge_path(d.edge(half).unwrap()).unwrap();
+        assert!(path[0].distance(pos2(60.0, 0.0)) < 1e-3, "{:?}", path[0]);
+
+        // Deleting the shape removes the attached line but keeps the free one.
+        d.remove(&[n].into_iter().collect());
+        assert!(d.edge(half).is_none());
+        assert!(d.edge(free).is_some());
+    }
+
+    #[test]
+    fn ends_serialize_untagged_and_old_files_load() {
+        let mut d = Diagram::default();
+        let n = d.add_node(ShapeKind::Rectangle, pos2(0.0, 0.0));
+        d.add_line(End::Node(n), End::point(pos2(5.0, 6.0)), &LINE_PRESETS[3]);
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains(r#""from":1"#) && json.contains(r#""to":[5.0,6.0]"#), "{json}");
+        assert!(!json.contains("dashed"));
+        let back: Diagram = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, d);
+
+        // Format before line patterns: plain ids and a `dashed` flag.
+        let old = r#"{"nodes":[],"edges":[{"id":3,"from":1,"to":2,"label":"","color":[0,0,0,255],
+            "width":1.0,"dashed":true,"start_arrow":false,"end_arrow":true,"style":"Orthogonal"}],"next_id":3}"#;
+        let mut d: Diagram = serde_json::from_str(old).unwrap();
+        d.migrate();
+        assert_eq!(d.edges[0].from, End::Node(1));
+        assert_eq!(d.edges[0].pattern, LinePattern::Dashed);
+    }
+
+    #[test]
+    fn copy_includes_selected_free_lines_only() {
+        let mut d = Diagram::default();
+        let a = d.add_line(End::point(pos2(0.0, 0.0)), End::point(pos2(10.0, 0.0)), &LINE_PRESETS[0]);
+        let _b = d.add_line(End::point(pos2(0.0, 9.0)), End::point(pos2(10.0, 9.0)), &LINE_PRESETS[0]);
+        let clip = d.copy_subset(&[a].into_iter().collect());
+        assert_eq!(clip.edges.len(), 1);
+        let new = d.paste(&clip, vec2(5.0, 5.0));
+        let pasted = d.edge(*new.iter().next().unwrap()).unwrap();
+        assert_eq!(pasted.from, End::Point([5.0, 5.0]));
     }
 }
