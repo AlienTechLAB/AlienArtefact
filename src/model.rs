@@ -998,6 +998,43 @@ pub struct Diagram {
     pub next_id: Id,
 }
 
+/// One diagram of a project, with the name shown on its tab.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NamedDiagram {
+    pub name: String,
+    pub diagram: Diagram,
+}
+
+/// A project file: several named diagrams.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProjectFile {
+    /// Format marker and version, so a project is told apart from a single diagram.
+    pub architect_ai_project: u32,
+    pub diagrams: Vec<NamedDiagram>,
+    /// The tab that was shown when the project was saved.
+    #[serde(default)]
+    pub active: usize,
+}
+
+/// Reads a project file, or a single-diagram file from before projects existed (it becomes a
+/// one-diagram project named `fallback_name`). Older fields are migrated.
+pub fn load_project(text: &str, fallback_name: &str) -> Result<(Vec<NamedDiagram>, usize), String> {
+    let (mut diagrams, active) = match serde_json::from_str::<ProjectFile>(text) {
+        Ok(p) => (p.diagrams, p.active),
+        Err(project_err) => match serde_json::from_str::<Diagram>(text) {
+            Ok(d) => (vec![NamedDiagram { name: fallback_name.to_owned(), diagram: d }], 0),
+            // Report the project error unless the file clearly is a single diagram.
+            Err(diagram_err) => {
+                return Err(if text.contains("architect_ai_project") { project_err } else { diagram_err }.to_string())
+            }
+        },
+    };
+    for d in &mut diagrams {
+        d.diagram.migrate();
+    }
+    Ok((diagrams, active))
+}
+
 /// Subset of a diagram, used for copy/paste and duplicate.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Clip {
@@ -2182,5 +2219,33 @@ mod hit_tests {
         assert_eq!(d.hit(mid, 3.0), Some(e), "the line, not the package behind it");
         assert_eq!(d.hit(pos2(-100.0, -60.0), 3.0), Some(a), "objects first");
         assert_eq!(d.hit(pos2(180.0, -120.0), 3.0), Some(pkg), "empty frame area selects the package");
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+
+    #[test]
+    fn projects_and_old_single_diagrams_both_load() {
+        let mut a = Diagram::default();
+        a.add_node(ShapeKind::Class, pos2(0.0, 0.0));
+        let project = ProjectFile {
+            architect_ai_project: 1,
+            diagrams: vec![
+                NamedDiagram { name: "Server".into(), diagram: a.clone() },
+                NamedDiagram { name: "Client".into(), diagram: Diagram::default() },
+            ],
+            active: 1,
+        };
+        let (diagrams, active) = load_project(&serde_json::to_string(&project).unwrap(), "x").unwrap();
+        assert_eq!((diagrams.len(), active, diagrams[0].name.as_str()), (2, 1, "Server"));
+        assert_eq!(diagrams[0].diagram, a);
+
+        // A file saved before projects existed: one diagram, named after the file.
+        let (single, active) = load_project(&serde_json::to_string(&a).unwrap(), "old").unwrap();
+        assert_eq!((single.len(), active, single[0].name.as_str()), (1, 0, "old"));
+
+        assert!(load_project("{ not json", "x").is_err());
     }
 }

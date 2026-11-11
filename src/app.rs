@@ -7,9 +7,10 @@ use egui::{vec2, Color32, Event, Key, Modifiers, Pos2, Rect, Sense, Stroke, Ui, 
 
 use crate::canvas::{Drag, LinkError};
 use crate::model::{
-    Clip, Diagram, EdgeStyle, Head, Id, LinePattern, LinkKind, Member, MemberKind, Node, PointerKind, RelationKind,
-    ShapeKind, Visibility,
+    Clip, Diagram, EdgeStyle, Head, Id, LinePattern, LinkKind, Member, MemberKind, Node, PointerKind,
+    ProjectFile, RelationKind, ShapeKind, Visibility,
 };
+use crate::tabs::Tab;
 use crate::render::{paint_edge, paint_shape, Deco};
 
 const MAX_UNDO: usize = 200;
@@ -28,12 +29,22 @@ pub struct App {
     pub snap: bool,
     pub snap_active: bool,
 
-    undo: Vec<Diagram>,
-    redo: Vec<Diagram>,
+    pub undo: Vec<Diagram>,
+    pub redo: Vec<Diagram>,
     /// Last committed state; differences from it become one undo step.
-    stable: Diagram,
-    saved: Diagram,
-    path: Option<PathBuf>,
+    pub stable: Diagram,
+    /// The active diagram as last saved.
+    pub saved: Diagram,
+    /// The project file.
+    pub path: Option<PathBuf>,
+    /// The project's diagrams, one tab each. The active tab's state is in the fields above.
+    pub tabs: Vec<Tab>,
+    pub active: usize,
+    /// Tab names as last saved (adding, removing, renaming or reordering tabs is a change).
+    pub saved_names: Vec<String>,
+    /// The tab being renamed, and the name typed so far.
+    pub renaming: Option<(usize, String)>,
+    pub rename_focus: bool,
     title: String,
     clipboard: Option<Clip>,
     paste_count: u32,
@@ -71,6 +82,11 @@ impl Default for App {
             stable: Diagram::default(),
             saved: Diagram::default(),
             path: None,
+            tabs: vec![Tab { name: "Diagram 1".into(), state: None }],
+            active: 0,
+            saved_names: vec!["Diagram 1".into()],
+            renaming: None,
+            rename_focus: false,
             title: String::new(),
             clipboard: None,
             paste_count: 0,
@@ -104,7 +120,10 @@ impl eframe::App for App {
         egui::Panel::right("format").resizable(true).default_size(320.0).size_range(220.0..=560.0).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| self.format_panel(ui));
         });
-        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
+        egui::CentralPanel::no_frame().show(ui, |ui| {
+            egui::Panel::top("tabs").show(ui, |ui| self.tab_bar(ui));
+            self.canvas(ui);
+        });
         self.link_error_window(&ctx);
         self.validate_window(&ctx);
 
@@ -128,7 +147,7 @@ impl App {
         self.force_commit();
     }
 
-    fn force_commit(&mut self) {
+    pub fn force_commit(&mut self) {
         if self.diagram == self.stable {
             return;
         }
@@ -163,29 +182,17 @@ impl App {
         self.drag = Drag::None;
     }
 
-    fn reset_document(&mut self, diagram: Diagram, path: Option<PathBuf>) {
-        self.diagram = diagram;
-        self.stable = self.diagram.clone();
-        self.saved = self.diagram.clone();
-        self.undo.clear();
-        self.redo.clear();
-        self.selection.clear();
-        self.editing = None;
-        self.drag = Drag::None;
-        self.path = path;
-    }
-
     // ---------------------------------------------------------------- files
 
     fn dirty(&self) -> bool {
-        self.diagram != self.saved
+        self.project_dirty()
     }
 
     fn confirm_discard(&self) -> bool {
         !self.dirty()
             || rfd::MessageDialog::new()
                 .set_title("Unsaved changes")
-                .set_description("The diagram has unsaved changes. Discard them?")
+                .set_description("The project has unsaved changes. Discard them?")
                 .set_buttons(rfd::MessageButtons::YesNo)
                 .show()
                 == rfd::MessageDialogResult::Yes
@@ -203,10 +210,9 @@ impl App {
 
     fn new_file(&mut self) {
         if self.confirm_discard() {
-            self.reset_document(Diagram::default(), None);
-            self.zoom = 1.0;
-            self.pan = vec2(40.0, 40.0);
-            self.status = "New diagram".into();
+            self.reset_project(Vec::new(), 0, None);
+            self.fit_pending = false;
+            self.status = "New project".into();
         }
     }
 
@@ -214,21 +220,22 @@ impl App {
         if !self.confirm_discard() {
             return;
         }
-        if let Some(path) = rfd::FileDialog::new().add_filter("Diagram", &["json"]).pick_file() {
+        if let Some(path) = rfd::FileDialog::new().add_filter("Project or diagram", &["json"]).pick_file() {
             self.open_path(path);
         }
     }
 
     pub fn open_path(&mut self, path: PathBuf) {
+        // A single-diagram file (from before projects) opens as a one-tab project named after it.
+        let fallback = path.file_stem().map_or_else(|| "Diagram 1".into(), |s| s.to_string_lossy().into_owned());
         match std::fs::read_to_string(&path)
             .map_err(|e| e.to_string())
-            .and_then(|s| serde_json::from_str::<Diagram>(&s).map_err(|e| e.to_string()))
+            .and_then(|s| crate::model::load_project(&s, &fallback))
         {
-            Ok(mut d) => {
-                d.migrate();
-                self.status = format!("Opened {}", path.display());
-                self.reset_document(d, Some(path));
-                self.fit_pending = true;
+            Ok((diagrams, active)) => {
+                let count = diagrams.len();
+                self.status = format!("Opened {} ({count} diagram{})", path.display(), if count == 1 { "" } else { "s" });
+                self.reset_project(diagrams, active, Some(path));
             }
             Err(e) => self.status = format!("Could not open {}: {e}", path.display()),
         }
@@ -243,8 +250,8 @@ impl App {
 
     fn save_as(&mut self) {
         if let Some(p) = rfd::FileDialog::new()
-            .add_filter("Diagram", &["json"])
-            .set_file_name("diagram.json")
+            .add_filter("Project", &["json"])
+            .set_file_name("project.json")
             .save_file()
         {
             self.write_to(p);
@@ -253,10 +260,11 @@ impl App {
 
     fn write_to(&mut self, path: PathBuf) {
         self.force_commit();
-        let json = serde_json::to_string_pretty(&self.diagram).expect("diagram serializes");
+        let project = ProjectFile { architect_ai_project: 1, diagrams: self.project_diagrams(), active: self.active };
+        let json = serde_json::to_string_pretty(&project).expect("project serializes");
         match std::fs::write(&path, json) {
             Ok(()) => {
-                self.saved = self.diagram.clone();
+                self.mark_project_saved();
                 self.status = format!("Saved {}", path.display());
                 self.path = Some(path);
             }
@@ -267,7 +275,7 @@ impl App {
     fn export_svg(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("SVG image", &["svg"])
-            .set_file_name("diagram.svg")
+            .set_file_name(format!("{}.svg", self.active_tab_name()))
             .save_file()
         else {
             return;
@@ -285,7 +293,11 @@ impl App {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled".into());
-        let title = format!("{name}{} - architect.ai", if self.dirty() { "*" } else { "" });
+        let title = format!(
+            "{name}{} \u{2014} {} - architect.ai",
+            if self.dirty() { "*" } else { "" },
+            self.active_tab_name()
+        );
         if title != self.title {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
             self.title = title;
@@ -466,6 +478,12 @@ impl App {
         if key(cmd, Key::N) {
             self.new_file();
         }
+        if key(cmd, Key::T) {
+            self.new_tab();
+        }
+        if key(cmd, Key::W) {
+            self.close_tab(self.active);
+        }
         if key(cmd, Key::A) {
             self.select_all();
         }
@@ -517,9 +535,19 @@ impl App {
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.add(egui::Button::new("New").shortcut_text("Ctrl+N")).clicked() {
+                if ui.add(egui::Button::new("New project").shortcut_text("Ctrl+N")).clicked() {
                     self.new_file();
                 }
+                if ui.add(egui::Button::new("New diagram").shortcut_text("Ctrl+T")).clicked() {
+                    self.new_tab();
+                }
+                if ui
+                    .add_enabled(self.tabs.len() > 1, egui::Button::new("Close diagram").shortcut_text("Ctrl+W"))
+                    .clicked()
+                {
+                    self.close_tab(self.active);
+                }
+                ui.separator();
                 if ui.add(egui::Button::new("Open...").shortcut_text("Ctrl+O")).clicked() {
                     self.open();
                 }
@@ -833,8 +861,8 @@ impl App {
                 ui.checkbox(&mut self.snap, "Snap to grid (hold Alt to bypass)");
             });
             section(ui, "Tips", "fmt.tips", |ui| ui.weak(
-                "Tips:\n\
-                 - Click or drag shapes from the left panel.\n\
+                "- Click or drag shapes from the left panel.\n\
+                 - Each tab is one diagram of the project: + adds one, double-click a tab to rename it.\n\
                  - Pick a pointer type in the Pointers section, then drag from the owner to the pointed-to object. \
                  Drag a selected pointer's end handles to re-attach it.\n\
                  - Double-click an object or pointer to edit its name or label.\n\

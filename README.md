@@ -33,7 +33,8 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 - Format panel: fill/line/font colors, line width, font size, position and size
 - Undo/redo, cut/copy/paste, duplicate, delete, bring to front / send to back
 - Pan and zoom, fit to content
-- Save/open as `.json`, export to `.svg`
+- Projects: several diagrams in one file, one tab each (Ctrl+T new, Ctrl+W close; double-click a tab to rename, right-click to duplicate or move). Older single-diagram files open as one-tab projects
+- Save/open as `.json`, export the shown diagram to `.svg`
 
 ## Controls
 
@@ -52,6 +53,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 | Copy / Cut / Paste / Duplicate | Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D |
 | Select all / Delete | Ctrl+A / Delete |
 | New / Open / Save / Save as | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S |
+| New diagram (tab) / Close diagram | Ctrl+T / Ctrl+W |
 
 ## Run
 

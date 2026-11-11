@@ -6,6 +6,7 @@ mod canvas;
 mod model;
 mod render;
 mod svg;
+mod tabs;
 mod validate;
 
 use eframe::egui;
@@ -19,23 +20,31 @@ fn main() -> eframe::Result {
             eprintln!("usage: architect_ai --validate <diagram.json>");
             std::process::exit(2);
         };
-        let diagram = std::fs::read_to_string(path)
+        let loaded = std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
-            .and_then(|s| serde_json::from_str::<model::Diagram>(&s).map_err(|e| e.to_string()));
-        let mut diagram = match diagram {
-            Ok(d) => d,
+            .and_then(|s| model::load_project(&s, "diagram"));
+        let diagrams = match loaded {
+            Ok((diagrams, _)) => diagrams,
             Err(e) => {
                 eprintln!("{path}: {e}");
                 std::process::exit(2);
             }
         };
-        diagram.migrate();
-        let issues = validate::validate(&diagram);
-        for i in &issues {
-            println!("{:<4} {}", i.rule, i.message);
+        let mut total = 0;
+        for d in &diagrams {
+            let issues = validate::validate(&d.diagram);
+            for i in &issues {
+                // Name the diagram when the project has several.
+                if diagrams.len() > 1 {
+                    println!("[{}] {:<4} {}", d.name, i.rule, i.message);
+                } else {
+                    println!("{:<4} {}", i.rule, i.message);
+                }
+            }
+            total += issues.len();
         }
-        println!("{} problem(s)", issues.len());
-        std::process::exit(if issues.is_empty() { 0 } else { 1 });
+        println!("{total} problem(s)");
+        std::process::exit(if total == 0 { 0 } else { 1 });
     }
 
     #[allow(unused_mut)]
