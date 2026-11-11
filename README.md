@@ -4,7 +4,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 
 ## Features
 
-- UML: class/struct box with the name in a header compartment, editable in the Class section of the right panel
+- Objects: class/struct, and trait/interface (Rust trait, C# interface, C++ pure virtual class) shown with a `«trait»` stereotype above the name. Names are edited in the right panel or by double-clicking
 - Shapes: rectangle, rounded rectangle, ellipse, diamond, triangle, hexagon, parallelogram, cylinder, text
 - Select (click, Shift+click, rubber band), move with grid snapping, resize via handles
 - Connectors: hover a shape and drag a blue arrow onto another shape (or onto empty canvas to create a connected copy); click an arrow to clone the shape in that direction

@@ -622,7 +622,7 @@ impl App {
             let sr = self.rect_to_screen(n.text_rect());
             let h = (n.font_size * z * 1.6).max(20.0);
             let rect = Rect::from_center_size(sr.center(), vec2(sr.width().max(60.0), sr.height().max(h)));
-            (rect, n.font_size * z, n.kind == ShapeKind::Class)
+            (rect, n.font_size * z, n.kind.is_object())
         } else if let Some((e, path)) = self.diagram.edge(id).and_then(|e| Some((e, self.diagram.edge_path(e)?))) {
             let sp: Vec<Pos2> = path.iter().map(|p| self.to_screen(*p)).collect();
             let size = vec2(160.0, 28.0);

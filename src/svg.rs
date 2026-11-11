@@ -4,7 +4,7 @@ use std::fmt::Write;
 
 use egui::{vec2, Pos2, Rect};
 
-use crate::model::{badge_center, edge_geometry, label_center, outline, Diagram, HeadFill, Rgba, ShapeKind};
+use crate::model::{badge_center, edge_geometry, label_center, outline, stereotype_height, Diagram, HeadFill, Rgba, ShapeKind};
 
 fn hex(c: Rgba) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
@@ -81,7 +81,7 @@ pub fn export(d: &Diagram) -> String {
                     r.height()
                 );
             }
-            ShapeKind::Class => {
+            ShapeKind::Class | ShapeKind::Trait => {
                 let _ = writeln!(
                     out,
                     r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" {paint}/>"#,
@@ -133,6 +133,11 @@ pub fn export(d: &Diagram) -> String {
                     let _ = writeln!(out, r#"<polygon points="{}" {paint}/>"#, points(&pts));
                 }
             }
+        }
+        if let Some(stereotype) = n.kind.stereotype() {
+            let band = stereotype_height(n.font_size, r.height());
+            let center = egui::pos2(r.center().x, r.top() + band / 2.0);
+            text_block(&mut out, center, stereotype, n.font_size * 0.85, n.stroke);
         }
         text_block(&mut out, n.text_rect().center(), &n.text, n.font_size, n.text_color);
     }

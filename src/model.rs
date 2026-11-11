@@ -31,17 +31,40 @@ pub enum ShapeKind {
     Text,
     /// UML-style class/struct box: name in a header compartment, body below.
     Class,
+    /// Interface (Rust trait, C# interface, C++ pure virtual class): like a class,
+    /// with a `«trait»` stereotype above the name.
+    Trait,
 }
 
-/// Height of a class box's name compartment, for a given font size (same units as `font_size`).
-pub fn class_header_height(font_size: f32, box_height: f32) -> f32 {
-    (font_size * 2.2).min(box_height)
+/// Height of an object's header compartment (stereotype + name), for a given font size
+/// (same units as `font_size`).
+pub fn header_height(kind: ShapeKind, font_size: f32, box_height: f32) -> f32 {
+    let lines = if kind.stereotype().is_some() { 3.6 } else { 2.2 };
+    (font_size * lines).min(box_height)
+}
+
+/// Height of the stereotype band at the top of an object's header.
+pub fn stereotype_height(font_size: f32, box_height: f32) -> f32 {
+    (font_size * 1.7).min(box_height)
 }
 
 impl ShapeKind {
     /// Shapes offered in the "Objects" palette section. The other kinds can no longer be
     /// created, but stay so diagrams that contain them still open and draw.
-    pub const OBJECTS: [ShapeKind; 1] = [ShapeKind::Class];
+    pub const OBJECTS: [ShapeKind; 2] = [ShapeKind::Class, ShapeKind::Trait];
+
+    /// Class-like objects: a header with the name, body below.
+    pub fn is_object(self) -> bool {
+        matches!(self, ShapeKind::Class | ShapeKind::Trait)
+    }
+
+    /// UML stereotype shown above the name, e.g. `«trait»`.
+    pub fn stereotype(self) -> Option<&'static str> {
+        match self {
+            ShapeKind::Trait => Some("\u{ab}trait\u{bb}"),
+            _ => None,
+        }
+    }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -55,6 +78,7 @@ impl ShapeKind {
             ShapeKind::Cylinder => "Cylinder",
             ShapeKind::Text => "Text",
             ShapeKind::Class => "Class / struct",
+            ShapeKind::Trait => "Trait / interface",
         }
     }
 
@@ -66,7 +90,7 @@ impl ShapeKind {
             ShapeKind::Hexagon => vec2(120.0, 80.0),
             ShapeKind::Cylinder => vec2(60.0, 80.0),
             ShapeKind::Text => vec2(80.0, 30.0),
-            ShapeKind::Class => vec2(160.0, 100.0),
+            ShapeKind::Class | ShapeKind::Trait => vec2(160.0, 100.0),
             _ => vec2(120.0, 60.0),
         }
     }
@@ -99,6 +123,7 @@ impl Node {
             text: match kind {
                 ShapeKind::Text => "Text".into(),
                 ShapeKind::Class => "ClassName".into(),
+                ShapeKind::Trait => "TraitName".into(),
                 _ => String::new(),
             },
             fill: if is_text { NONE } else { WHITE },
@@ -118,14 +143,21 @@ impl Node {
         self.size = [r.width(), r.height()];
     }
 
-    /// Area where the shape's text is drawn: the name compartment for classes, otherwise the whole shape.
+    /// Area where the shape's text (an object's name) is drawn: below the stereotype in an
+    /// object's header, otherwise the whole shape.
     pub fn text_rect(&self) -> Rect {
         let r = self.rect();
-        if self.kind == ShapeKind::Class {
-            Rect::from_min_size(r.min, vec2(r.width(), class_header_height(self.font_size, r.height())))
-        } else {
-            r
+        if !self.kind.is_object() {
+            return r;
         }
+        let header = header_height(self.kind, self.font_size, r.height());
+        let top = if self.kind.stereotype().is_some() {
+            // Overlaps the stereotype band a little; the name is centered in what remains.
+            (self.font_size * 1.3).min(header)
+        } else {
+            0.0
+        };
+        Rect::from_min_max(pos2(r.left(), r.top() + top), pos2(r.right(), r.top() + header))
     }
 
     /// Point on the shape outline in the direction of `toward`, as seen from the center.
@@ -969,5 +1001,34 @@ mod self_pointer_tests {
         assert!((path[3].y - path[0].y - 40.0).abs() < 1e-3, "loop spans 2 * 20 units");
         // Selectable by clicking the loop.
         assert_eq!(d.edge_at(pos2(120.0, 0.0), 3.0), Some(id));
+    }
+}
+
+#[cfg(test)]
+mod trait_tests {
+    use super::*;
+
+    #[test]
+    fn trait_name_sits_below_its_stereotype() {
+        let t = Node::new(1, ShapeKind::Trait, pos2(0.0, 0.0));
+        let c = Node::new(2, ShapeKind::Class, pos2(0.0, 0.0));
+        assert_eq!(t.text, "TraitName");
+        assert!(t.kind.is_object() && t.kind.stereotype().is_some() && c.kind.stereotype().is_none());
+        let (tr, cr) = (t.text_rect(), c.text_rect());
+        // The name band starts below the top (stereotype above it) and the header is taller.
+        assert!(tr.top() > t.rect().top());
+        assert!(tr.bottom() > cr.bottom());
+        assert!(tr.height() >= cr.height() * 0.9, "name band keeps about a line and a half");
+    }
+
+    #[test]
+    fn trait_round_trips_and_accepts_pointers() {
+        let mut d = Diagram::default();
+        let c = d.add_node(ShapeKind::Class, pos2(0.0, 0.0));
+        let t = d.add_node(ShapeKind::Trait, pos2(300.0, 0.0));
+        d.add_pointer(End::Node(c), End::Node(t), PointerKind::Unique, false);
+        let back: Diagram = serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+        assert_eq!(back, d);
+        assert!(d.edge_path(&d.edges[0]).is_some());
     }
 }

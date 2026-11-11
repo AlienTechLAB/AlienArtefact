@@ -625,11 +625,24 @@ impl App {
                 if resp.hovered() {
                     ui.painter().rect_filled(rect, 4.0, ui.visuals().widgets.hovered.bg_fill);
                 }
+                // Icon in the top part, a short caption below (class and trait icons look alike when small).
                 let size = kind.default_size();
-                let scale = ((rect.width() - 14.0) / size.x).min((rect.height() - 14.0) / size.y);
-                let icon = Rect::from_center_size(rect.center(), size * scale);
+                let icon_area = Rect::from_min_max(rect.min + vec2(7.0, 5.0), rect.right_bottom() - vec2(7.0, 17.0));
+                let scale = (icon_area.width() / size.x).min(icon_area.height() / size.y);
+                let icon = Rect::from_center_size(icon_area.center(), size * scale);
                 let stroke_col = ui.visuals().text_color();
                 paint_shape(ui.painter(), kind, icon, Color32::WHITE, Stroke::new(1.2, stroke_col), scale, 12.0 * scale);
+                let caption = match kind {
+                    ShapeKind::Trait => "trait",
+                    _ => "class",
+                };
+                ui.painter().text(
+                    egui::pos2(rect.center().x, rect.bottom() - 9.0),
+                    egui::Align2::CENTER_CENTER,
+                    caption,
+                    egui::FontId::monospace(10.0),
+                    stroke_col,
+                );
 
                 if resp.clicked() {
                     let n = self.diagram.nodes.len() as f32;
@@ -710,10 +723,10 @@ impl App {
     fn node_format(&mut self, ui: &mut Ui, ids: &[Id]) {
         let before = self.diagram.node(ids[0]).unwrap().clone();
         let mut n = before.clone();
-        let single_class = ids.len() == 1 && n.kind == ShapeKind::Class;
+        let single_class = ids.len() == 1 && n.kind.is_object();
 
         if single_class {
-            ui.strong("Class");
+            ui.strong(if n.kind == ShapeKind::Trait { "Trait" } else { "Class" });
             ui.separator();
             egui::Grid::new("class_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                 ui.label("Name");

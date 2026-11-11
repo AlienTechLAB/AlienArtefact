@@ -5,7 +5,7 @@ use egui::{
     Stroke, StrokeKind,
 };
 
-use crate::model::{badge_center, class_header_height, edge_geometry, outline, Head, HeadFill, LinePattern, ShapeKind};
+use crate::model::{badge_center, edge_geometry, header_height, stereotype_height, outline, Head, HeadFill, LinePattern, ShapeKind};
 
 /// `font_px` is the shape's font size in screen pixels (sizes the class name compartment).
 pub fn paint_shape(
@@ -18,11 +18,16 @@ pub fn paint_shape(
     font_px: f32,
 ) {
     match kind {
-        ShapeKind::Class => {
+        ShapeKind::Class | ShapeKind::Trait => {
             painter.rect(r, 0.0, fill, stroke, StrokeKind::Middle);
-            let y = r.top() + class_header_height(font_px, r.height());
+            let y = r.top() + header_height(kind, font_px, r.height());
             if y < r.bottom() {
                 painter.line_segment([pos2(r.left(), y), pos2(r.right(), y)], stroke);
+            }
+            // The stereotype is skipped when too small to read (e.g. palette icons).
+            if let Some(stereotype) = kind.stereotype().filter(|_| font_px * 0.85 >= 5.0) {
+                let band = Rect::from_min_size(r.min, vec2(r.width(), stereotype_height(font_px, r.height())));
+                paint_text(painter, band, stereotype, font_px * 0.85, stroke.color);
             }
         }
         ShapeKind::Rectangle | ShapeKind::Text => {
