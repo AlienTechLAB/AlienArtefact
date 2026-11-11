@@ -4,7 +4,7 @@ use std::fmt::Write;
 
 use egui::{vec2, Pos2, Rect};
 
-use crate::model::{arrow_geometry, outline, polyline_midpoint, Diagram, Rgba, ShapeKind};
+use crate::model::{badge_center, edge_geometry, label_center, outline, Diagram, HeadFill, Rgba, ShapeKind};
 
 fn hex(c: Rgba) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
@@ -139,8 +139,10 @@ pub fn export(d: &Diagram) -> String {
 
     for e in &d.edges {
         let Some(path) = d.edge_path(e) else { continue };
-        let (line, heads) = arrow_geometry(&path, 10.0 + e.width, e.start_arrow, e.end_arrow);
-        let (dashes, gaps) = e.pattern.dashes(e.width);
+        let (pattern, start, end) = e.look();
+        let len = 10.0 + e.width;
+        let (line, heads) = edge_geometry(&path, len, start, end);
+        let (dashes, gaps) = pattern.dashes(e.width);
         let dash = if dashes.is_empty() {
             String::new()
         } else {
@@ -155,14 +157,39 @@ pub fn export(d: &Diagram) -> String {
             alpha(e.color),
             e.width
         );
+        let stroke = format!(r#"stroke="{}" stroke-width="{}""#, hex(e.color), e.width);
         for h in heads {
-            let _ = writeln!(out, r#"<polygon points="{}" fill="{}"/>"#, points(&h), hex(e.color));
+            let pts = points(&h.points);
+            let _ = match h.fill {
+                HeadFill::Solid => writeln!(out, r#"<polygon points="{pts}" fill="{}"/>"#, hex(e.color)),
+                HeadFill::Hollow => writeln!(out, r#"<polygon points="{pts}" fill="white" {stroke}/>"#),
+                HeadFill::Open => writeln!(out, r#"<polyline points="{pts}" fill="none" {stroke}/>"#),
+            };
+        }
+        if let Some(badge) = e.badge() {
+            let (w, h) = (badge.chars().count() as f32 * 6.0 + 6.0, 13.0);
+            let at = badge_center(&path, len, egui::vec2(w, h), true);
+            let _ = writeln!(
+                out,
+                r##"<rect x="{:.1}" y="{:.1}" width="{w:.1}" height="{h:.1}" rx="3" fill="#f8f8f8" stroke="{}" stroke-opacity="0.5"/>"##,
+                at.x - w / 2.0,
+                at.y - h / 2.0,
+                hex(e.color)
+            );
+            let _ = writeln!(
+                out,
+                r#"<text x="{:.1}" y="{:.1}" font-size="10" font-family="monospace" fill="{}" text-anchor="middle" dominant-baseline="middle">{}</text>"#,
+                at.x,
+                at.y,
+                hex(e.color),
+                esc(&badge)
+            );
         }
         if !e.label.is_empty() {
-            let mid = polyline_midpoint(&path);
             let lines = e.label.lines().count().max(1) as f32;
             let longest = e.label.lines().map(|l| l.chars().count()).max().unwrap_or(0) as f32;
             let (w, h) = (longest * 6.5 + 6.0, lines * 13.2 + 2.0);
+            let mid = label_center(e.pointer.is_some(), &path, len, egui::vec2(w, h));
             let _ = writeln!(
                 out,
                 r#"<rect x="{:.1}" y="{:.1}" width="{w:.1}" height="{h:.1}" fill="white"/>"#,

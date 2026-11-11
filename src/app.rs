@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use egui::{vec2, Color32, Event, Key, Modifiers, Pos2, Rect, Sense, Stroke, Ui, Vec2, ViewportCommand};
 
 use crate::canvas::Drag;
-use crate::model::{Clip, Diagram, EdgeStyle, Id, LinePattern, LinePreset, ShapeKind, LINE_PRESETS};
+use crate::model::{Clip, Diagram, EdgeStyle, Head, Id, LinePattern, PointerKind, ShapeKind};
 use crate::render::{paint_edge, paint_shape};
 
 const MAX_UNDO: usize = 200;
@@ -39,8 +39,10 @@ pub struct App {
     allow_close: bool,
     /// Fit the view once the canvas size is known (after opening a file).
     pub fit_pending: bool,
-    /// Active line tool: the next drag (or click) on the canvas draws this kind of line.
-    pub line_tool: Option<LinePreset>,
+    /// Active pointer tool: the next drag (or click) on the canvas draws this kind of pointer.
+    pub pointer_tool: Option<PointerKind>,
+    /// New pointers point to a const object.
+    pub pointer_const: bool,
 }
 
 impl Default for App {
@@ -70,7 +72,8 @@ impl Default for App {
             status: String::new(),
             allow_close: false,
             fit_pending: false,
-            line_tool: None,
+            pointer_tool: None,
+            pointer_const: false,
         }
     }
 }
@@ -380,7 +383,7 @@ impl App {
             }
         }
         if key(Modifiers::NONE, Key::Escape) {
-            if self.line_tool.take().is_none() {
+            if self.pointer_tool.take().is_none() {
                 self.selection.clear();
             }
         }
@@ -568,33 +571,54 @@ impl App {
         ui.add_space(8.0);
         self.palette_section(ui, "General", &ShapeKind::ALL);
         ui.add_space(8.0);
-        self.line_palette(ui);
+        self.pointer_palette(ui);
     }
 
-    fn line_palette(&mut self, ui: &mut Ui) {
-        ui.strong("Lines");
+    fn pointer_palette(&mut self, ui: &mut Ui) {
+        ui.strong("Pointers");
         ui.separator();
         let tile = vec2(52.0, 44.0);
         ui.horizontal_wrapped(|ui| {
-            for preset in LINE_PRESETS {
+            for kind in PointerKind::ALL {
                 let (rect, resp) = ui.allocate_exact_size(tile, Sense::click());
-                let resp = resp.on_hover_text(format!("{} (click, then drag on the canvas)", preset.name));
-                let active = self.line_tool == Some(preset);
+                let resp = resp.on_hover_text(format!(
+                    "{} (click, then drag from the owner to the pointed-to object)",
+                    kind.name()
+                ));
+                let active = self.pointer_tool == Some(kind);
                 if active {
                     ui.painter().rect(rect, 4.0, ui.visuals().selection.bg_fill, ui.visuals().selection.stroke, egui::StrokeKind::Inside);
                 } else if resp.hovered() {
                     ui.painter().rect_filled(rect, 4.0, ui.visuals().widgets.hovered.bg_fill);
                 }
-                let pts = [rect.left_bottom() + vec2(10.0, -10.0), rect.right_top() + vec2(-10.0, 10.0)];
                 let col = ui.visuals().text_color();
-                paint_edge(ui.painter(), &pts, col, 1.5, preset.pattern, preset.start_arrow, preset.end_arrow, 0.6);
+                let y = rect.top() + 14.0;
+                let pts = [Pos2::new(rect.left() + 6.0, y), Pos2::new(rect.right() - 6.0, y)];
+                let (pattern, start, end) = kind.look();
+                paint_edge(ui.painter(), &pts, col, 1.2, pattern, start, end, 0.6);
+                let short = match kind {
+                    PointerKind::Raw => "T*",
+                    PointerKind::Reference => "T&",
+                    PointerKind::Unique => "unique",
+                    PointerKind::Shared => "shared",
+                    PointerKind::Weak => "weak",
+                };
+                ui.painter().text(
+                    Pos2::new(rect.center().x, rect.bottom() - 12.0),
+                    egui::Align2::CENTER_CENTER,
+                    short,
+                    egui::FontId::monospace(10.0),
+                    col,
+                );
                 if resp.clicked() {
-                    self.line_tool = if active { None } else { Some(preset) };
+                    self.pointer_tool = if active { None } else { Some(kind) };
                 }
             }
         });
-        if self.line_tool.is_some() {
-            ui.weak("Drag on the canvas to draw. Esc cancels.");
+        ui.checkbox(&mut self.pointer_const, "Points to const")
+            .on_hover_text("New pointers point to a const object");
+        if self.pointer_tool.is_some() {
+            ui.weak("Drag from the owner to the pointed-to object. Esc cancels.");
         }
     }
 
@@ -656,8 +680,8 @@ impl App {
                  - Click or drag shapes from the left panel.\n\
                  - Hover a shape and drag a blue arrow to another shape to connect them. \
                  Click an arrow to clone the shape in that direction.\n\
-                 - Pick a line in the Lines section, then drag on the canvas. \
-                 Drag a selected line's end handles to move or attach them.\n\
+                 - Pick a pointer type in the Pointers section, then drag from the owner to the pointed-to object. \
+                 Drag a selected pointer's end handles to re-attach it.\n\
                  - Double-click to edit text; double-click empty space to add text.\n\
                  - Ctrl+wheel zooms, wheel scrolls, middle/right-drag pans.",
             );
@@ -794,10 +818,46 @@ impl App {
     fn edge_format(&mut self, ui: &mut Ui, ids: &[Id]) {
         let before = self.diagram.edge(ids[0]).unwrap().clone();
         let mut e = before.clone();
-        ui.strong(if ids.len() == 1 { "Line".to_owned() } else { format!("{} lines", ids.len()) });
+        let heading = match (ids.len(), e.pointer) {
+            (1, Some(_)) => "Pointer".to_owned(),
+            (1, None) => "Line".to_owned(),
+            (n, _) => format!("{n} lines"),
+        };
+        ui.strong(heading);
         ui.separator();
         egui::Grid::new("edge_style").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            ui.label("Style");
+            ui.label("Pointer");
+            egui::ComboBox::from_id_salt("edge_pointer")
+                .selected_text(e.pointer.map_or("Plain connector", |k| k.name()))
+                .show_ui(ui, |ui| {
+                    for k in PointerKind::ALL {
+                        ui.selectable_value(&mut e.pointer, Some(k), k.name());
+                    }
+                });
+            ui.end_row();
+            if e.pointer.is_some() {
+                ui.label("Target");
+                ui.checkbox(&mut e.const_target, "const");
+                ui.end_row();
+            } else {
+                ui.label("Pattern");
+                egui::ComboBox::from_id_salt("edge_pattern").selected_text(e.pattern.name()).show_ui(ui, |ui| {
+                    for p in LinePattern::ALL {
+                        ui.selectable_value(&mut e.pattern, p, p.name());
+                    }
+                });
+                ui.end_row();
+                for (label, head, salt) in [("Start", &mut e.start_head, "start_head"), ("End", &mut e.end_head, "end_head")] {
+                    ui.label(label);
+                    egui::ComboBox::from_id_salt(salt).selected_text(head.name()).show_ui(ui, |ui| {
+                        for h in Head::ALL {
+                            ui.selectable_value(head, h, h.name());
+                        }
+                    });
+                    ui.end_row();
+                }
+            }
+            ui.label("Routing");
             egui::ComboBox::from_id_salt("edge_style")
                 .selected_text(match e.style {
                     EdgeStyle::Orthogonal => "Orthogonal",
@@ -814,23 +874,10 @@ impl App {
             ui.label("Width");
             ui.add(egui::DragValue::new(&mut e.width).range(0.5..=20.0).speed(0.1).suffix(" pt"));
             ui.end_row();
-            ui.label("Pattern");
-            egui::ComboBox::from_id_salt("edge_pattern").selected_text(e.pattern.name()).show_ui(ui, |ui| {
-                for p in LinePattern::ALL {
-                    ui.selectable_value(&mut e.pattern, p, p.name());
-                }
-            });
-            ui.end_row();
-            ui.label("Arrows");
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut e.start_arrow, "Start");
-                ui.checkbox(&mut e.end_arrow, "End");
-            });
-            ui.end_row();
         });
         if ids.len() == 1 {
             ui.add_space(6.0);
-            ui.label("Label");
+            ui.label(if e.pointer.is_some() { "Label (e.g. member name)" } else { "Label" });
             ui.add(egui::TextEdit::singleline(&mut e.label).desired_width(f32::INFINITY));
         }
 
@@ -855,11 +902,17 @@ impl App {
             if e.pattern != before.pattern {
                 t.pattern = e.pattern;
             }
-            if e.start_arrow != before.start_arrow {
-                t.start_arrow = e.start_arrow;
+            if e.start_head != before.start_head {
+                t.start_head = e.start_head;
             }
-            if e.end_arrow != before.end_arrow {
-                t.end_arrow = e.end_arrow;
+            if e.end_head != before.end_head {
+                t.end_head = e.end_head;
+            }
+            if e.pointer != before.pointer {
+                t.pointer = e.pointer;
+            }
+            if e.const_target != before.const_target {
+                t.const_target = e.const_target;
             }
         }
     }

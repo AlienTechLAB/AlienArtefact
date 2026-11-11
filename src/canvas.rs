@@ -8,8 +8,8 @@ use egui::{
 };
 
 use crate::app::App;
-use crate::model::{color, polyline_midpoint, End, Id, ShapeKind};
-use crate::render::{layout_centered, paint_edge, paint_shape, paint_text};
+use crate::model::{color, label_center, End, Id, ShapeKind};
+use crate::render::{head_len, layout_centered, paint_badge, paint_edge, paint_shape, paint_text};
 
 pub const GRID: f32 = 10.0;
 const MIN_SIZE: f32 = 10.0;
@@ -145,10 +145,10 @@ impl App {
 
         if matches!(self.drag, Drag::None) {
             self.hovered = pointer
-                .filter(|p| rect.contains(*p) && self.line_tool.is_none())
+                .filter(|p| rect.contains(*p) && self.pointer_tool.is_none())
                 .and_then(|p| self.hover_target(p));
         }
-        if self.line_tool.is_some() && resp.hovered() {
+        if self.pointer_tool.is_some() && resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
 
@@ -216,10 +216,10 @@ impl App {
     fn begin_drag(&mut self, p: Pos2, shift: bool) {
         let w = self.to_world(p);
 
-        // Line tool: start a new line here and drag its end.
-        if let Some(preset) = self.line_tool.take() {
+        // Pointer tool: start a new pointer here and drag its end.
+        if let Some(kind) = self.pointer_tool.take() {
             let from = self.end_at(w, None);
-            let id = self.diagram.add_line(from, End::point(w), &preset);
+            let id = self.diagram.add_pointer(from, End::point(w), kind, self.pointer_const);
             self.select_only(id);
             self.drag = Drag::Endpoint { id, end: 1 };
             return;
@@ -351,7 +351,9 @@ impl App {
             Drag::Endpoint { id, end } => {
                 let Some(e) = self.diagram.edge(id) else { return };
                 let other = if end == 0 { e.to } else { e.from };
-                let new_end = self.end_at(w, other.node());
+                // Pointers may point to their own object; plain connectors may not.
+                let exclude = if e.pointer.is_some() { None } else { other.node() };
+                let new_end = self.end_at(w, exclude);
                 let e = self.diagram.edge_mut(id).unwrap();
                 if end == 0 { e.from = new_end } else { e.to = new_end }
                 // A line dragged to (almost) nothing gets a default length instead of vanishing.
@@ -403,13 +405,13 @@ impl App {
     }
 
     fn on_click(&mut self, p: Pos2, shift: bool) {
-        // Line tool + click (no drag): place a default-length horizontal line.
-        if let Some(preset) = self.line_tool.take() {
+        // Pointer tool + click (no drag): place a default-length horizontal pointer.
+        if let Some(kind) = self.pointer_tool.take() {
             let w = self.to_world(p);
             let from = self.end_at(w, None);
             let start = self.diagram.end_center(from).unwrap_or(w);
             let to = End::point(self.snap_pos(start + vec2(120.0, 0.0)));
-            let id = self.diagram.add_line(from, to, &preset);
+            let id = self.diagram.add_pointer(from, to, kind, self.pointer_const);
             self.select_only(id);
             return;
         }
@@ -524,11 +526,16 @@ impl App {
             if self.selection.contains(&e.id) {
                 painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + 6.0, SEL.gamma_multiply(0.25))));
             }
-            paint_edge(painter, &sp, color(e.color), e.width * z, e.pattern, e.start_arrow, e.end_arrow, z);
+            let (pattern, start, end) = e.look();
+            paint_edge(painter, &sp, color(e.color), e.width * z, pattern, start, end, z);
+            if let Some(badge) = e.badge() {
+                let len = head_len(e.width * z, z);
+                paint_badge(painter, &sp, len, &badge, 10.0 * z, color(e.color));
+            }
             if !e.label.is_empty() && self.editing != Some(e.id) {
-                let mid = polyline_midpoint(&sp);
                 let galley = layout_centered(painter, &e.label, 11.0 * z, color(e.color), f32::INFINITY);
                 let size = galley.size();
+                let mid = label_center(e.pointer.is_some(), &sp, head_len(e.width * z, z), size + vec2(4.0, 2.0));
                 painter.rect_filled(Rect::from_center_size(mid, size + vec2(4.0, 2.0)), 0.0, Color32::WHITE);
                 painter.galley(pos2(mid.x, mid.y - size.y / 2.0), galley, color(e.color));
             }
@@ -568,7 +575,11 @@ impl App {
         match &self.drag {
             Drag::Endpoint { id, end } => {
                 // Highlight the shape the end would attach to.
-                let other = self.diagram.edge(*id).and_then(|e| if *end == 0 { e.to } else { e.from }.node());
+                let other = self
+                    .diagram
+                    .edge(*id)
+                    .filter(|e| e.pointer.is_none())
+                    .and_then(|e| if *end == 0 { e.to } else { e.from }.node());
                 let target = pointer
                     .and_then(|p| self.diagram.node_at(self.to_world(p)))
                     .filter(|t| Some(*t) != other)
@@ -616,9 +627,11 @@ impl App {
             let h = (n.font_size * z * 1.6).max(20.0);
             let rect = Rect::from_center_size(sr.center(), vec2(sr.width().max(60.0), sr.height().max(h)));
             (rect, n.font_size * z, n.kind == ShapeKind::Class)
-        } else if let Some(path) = self.diagram.edge(id).and_then(|e| self.diagram.edge_path(e)) {
+        } else if let Some((e, path)) = self.diagram.edge(id).and_then(|e| Some((e, self.diagram.edge_path(e)?))) {
             let sp: Vec<Pos2> = path.iter().map(|p| self.to_screen(*p)).collect();
-            (Rect::from_center_size(polyline_midpoint(&sp), vec2(160.0, 28.0)), 11.0 * z, false)
+            let size = vec2(160.0, 28.0);
+            let center = label_center(e.pointer.is_some(), &sp, head_len(e.width * z, z), size);
+            (Rect::from_center_size(center, size), 11.0 * z, true)
         } else {
             self.editing = None;
             return;

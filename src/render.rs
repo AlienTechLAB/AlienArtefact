@@ -5,7 +5,7 @@ use egui::{
     Stroke, StrokeKind,
 };
 
-use crate::model::{arrow_geometry, class_header_height, outline, LinePattern, ShapeKind};
+use crate::model::{badge_center, class_header_height, edge_geometry, outline, Head, HeadFill, LinePattern, ShapeKind};
 
 /// `font_px` is the shape's font size in screen pixels (sizes the class name compartment).
 pub fn paint_shape(
@@ -92,11 +92,11 @@ pub fn paint_edge(
     color: Color32,
     width: f32,
     pattern: LinePattern,
-    start_arrow: bool,
-    end_arrow: bool,
+    start: Head,
+    end: Head,
     zoom: f32,
 ) {
-    let (line, heads) = arrow_geometry(pts, 10.0 * zoom + width, start_arrow, end_arrow);
+    let (line, heads) = edge_geometry(pts, head_len(width, zoom), start, end);
     let stroke = Stroke::new(width, color);
     // Dash lengths follow the line width but never shrink below a visible size when zoomed out.
     let (dashes, gaps) = pattern.dashes(width.max(zoom));
@@ -106,6 +106,27 @@ pub fn paint_edge(
         painter.extend(Shape::dashed_line_with_offset(&line, stroke, &dashes, &gaps, 0.0));
     }
     for h in heads {
-        painter.add(Shape::convex_polygon(h.to_vec(), color, Stroke::NONE));
+        match h.fill {
+            HeadFill::Solid => painter.add(Shape::convex_polygon(h.points, color, Stroke::NONE)),
+            HeadFill::Hollow => painter.add(Shape::convex_polygon(h.points, Color32::WHITE, stroke)),
+            HeadFill::Open => painter.add(Shape::line(h.points, stroke)),
+        };
     }
+}
+
+/// Arrowhead length in screen pixels for a line of the given (screen) width.
+pub fn head_len(width: f32, zoom: f32) -> f32 {
+    10.0 * zoom + width
+}
+
+/// Small text tag (pointer kind) beside a line near its source end, on a background so it stays readable.
+pub fn paint_badge(painter: &Painter, pts: &[Pos2], head_len: f32, text: &str, size: f32, color: Color32) {
+    if size < 3.0 {
+        return;
+    }
+    let galley = painter.layout_no_wrap(text.to_owned(), FontId::monospace(size), color);
+    let box_size = galley.size() + vec2(6.0, 2.0);
+    let rect = Rect::from_center_size(badge_center(pts, head_len, box_size, true), box_size);
+    painter.rect(rect, 3.0, Color32::from_gray(248), Stroke::new(1.0, color.gamma_multiply(0.5)), StrokeKind::Inside);
+    painter.galley(rect.center() - galley.size() / 2.0, galley, color);
 }

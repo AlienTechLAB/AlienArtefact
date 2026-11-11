@@ -266,6 +266,94 @@ impl End {
     }
 }
 
+/// Decoration at one end of a line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Head {
+    #[default]
+    None,
+    /// Filled triangle.
+    Arrow,
+    /// Two strokes, like `>`.
+    OpenArrow,
+    /// Filled diamond (sole ownership).
+    Diamond,
+    /// Outlined diamond (shared ownership).
+    HollowDiamond,
+}
+
+impl Head {
+    pub const ALL: [Head; 5] = [Head::None, Head::Arrow, Head::OpenArrow, Head::Diamond, Head::HollowDiamond];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Head::None => "None",
+            Head::Arrow => "Arrow",
+            Head::OpenArrow => "Open arrow",
+            Head::Diamond => "Diamond",
+            Head::HollowDiamond => "Hollow diamond",
+        }
+    }
+}
+
+/// What a pointer line means. Each kind has a fixed look so diagrams read consistently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PointerKind {
+    Raw,
+    Reference,
+    Unique,
+    Shared,
+    Weak,
+}
+
+impl PointerKind {
+    pub const ALL: [PointerKind; 5] =
+        [PointerKind::Raw, PointerKind::Reference, PointerKind::Unique, PointerKind::Shared, PointerKind::Weak];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PointerKind::Raw => "Raw pointer",
+            PointerKind::Reference => "Reference",
+            PointerKind::Unique => "Unique pointer",
+            PointerKind::Shared => "Shared pointer",
+            PointerKind::Weak => "Weak pointer",
+        }
+    }
+
+    /// Line pattern, source head, target head.
+    pub fn look(self) -> (LinePattern, Head, Head) {
+        match self {
+            PointerKind::Raw => (LinePattern::Dashed, Head::None, Head::OpenArrow),
+            PointerKind::Reference => (LinePattern::Solid, Head::None, Head::OpenArrow),
+            PointerKind::Unique => (LinePattern::Solid, Head::Diamond, Head::Arrow),
+            PointerKind::Shared => (LinePattern::Solid, Head::HollowDiamond, Head::Arrow),
+            PointerKind::Weak => (LinePattern::Dotted, Head::HollowDiamond, Head::OpenArrow),
+        }
+    }
+
+    /// Short text shown near the source end, e.g. `const *` or `unique_ptr<const>`.
+    pub fn badge(self, const_target: bool) -> String {
+        let smart = |name: &str| if const_target { format!("{name}<const>") } else { name.to_owned() };
+        match self {
+            PointerKind::Raw => (if const_target { "const *" } else { "*" }).to_owned(),
+            PointerKind::Reference => (if const_target { "const &" } else { "&" }).to_owned(),
+            PointerKind::Unique => smart("unique_ptr"),
+            PointerKind::Shared => smart("shared_ptr"),
+            PointerKind::Weak => smart("weak_ptr"),
+        }
+    }
+}
+
+/// Fields from older file versions: read so those files still open, never written.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LegacyEdge {
+    #[serde(default, skip_serializing)]
+    pub dashed: bool,
+    #[serde(default, skip_serializing)]
+    pub start_arrow: bool,
+    #[serde(default, skip_serializing)]
+    pub end_arrow: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Edge {
     pub id: Id,
@@ -274,32 +362,55 @@ pub struct Edge {
     pub label: String,
     pub color: Rgba,
     pub width: f32,
+    /// Look of plain lines; pointers use their kind's fixed look instead.
     #[serde(default)]
     pub pattern: LinePattern,
-    /// Pre-pattern files stored `dashed: true`; read it so they still open, never write it.
-    #[serde(default, skip_serializing)]
-    pub dashed: bool,
-    pub start_arrow: bool,
-    pub end_arrow: bool,
+    #[serde(default)]
+    pub start_head: Head,
+    #[serde(default)]
+    pub end_head: Head,
+    /// `Some` makes this line a pointer relation from `from` to `to`.
+    #[serde(default)]
+    pub pointer: Option<PointerKind>,
+    /// The pointed-to object is const.
+    #[serde(default)]
+    pub const_target: bool,
     pub style: EdgeStyle,
+    #[serde(flatten, default)]
+    pub legacy: LegacyEdge,
 }
 
-/// Line presets offered in the palette.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LinePreset {
-    pub name: &'static str,
-    pub start_arrow: bool,
-    pub end_arrow: bool,
-    pub pattern: LinePattern,
-}
+impl Edge {
+    fn new(id: Id, from: End, to: End, style: EdgeStyle) -> Self {
+        Self {
+            id,
+            from,
+            to,
+            label: String::new(),
+            color: BLACK,
+            width: 1.0,
+            pattern: LinePattern::Solid,
+            start_head: Head::None,
+            end_head: Head::None,
+            pointer: None,
+            const_target: false,
+            style,
+            legacy: LegacyEdge::default(),
+        }
+    }
 
-pub const LINE_PRESETS: [LinePreset; 5] = [
-    LinePreset { name: "Line", start_arrow: false, end_arrow: false, pattern: LinePattern::Solid },
-    LinePreset { name: "Arrow", start_arrow: false, end_arrow: true, pattern: LinePattern::Solid },
-    LinePreset { name: "Double arrow", start_arrow: true, end_arrow: true, pattern: LinePattern::Solid },
-    LinePreset { name: "Dashed arrow", start_arrow: false, end_arrow: true, pattern: LinePattern::Dashed },
-    LinePreset { name: "Dotted line", start_arrow: false, end_arrow: false, pattern: LinePattern::Dotted },
-];
+    /// Effective line pattern and end decorations.
+    pub fn look(&self) -> (LinePattern, Head, Head) {
+        match self.pointer {
+            Some(kind) => kind.look(),
+            None => (self.pattern, self.start_head, self.end_head),
+        }
+    }
+
+    pub fn badge(&self) -> Option<String> {
+        self.pointer.map(|k| k.badge(self.const_target))
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Diagram {
@@ -348,46 +459,34 @@ impl Diagram {
     /// Adds an orthogonal arrow connector between two shapes.
     pub fn add_edge(&mut self, from: Id, to: Id) -> Id {
         let id = self.alloc_id();
-        self.edges.push(Edge {
-            id,
-            from: End::Node(from),
-            to: End::Node(to),
-            label: String::new(),
-            color: BLACK,
-            width: 1.0,
-            pattern: LinePattern::Solid,
-            dashed: false,
-            start_arrow: false,
-            end_arrow: true,
-            style: EdgeStyle::Orthogonal,
-        });
+        let mut e = Edge::new(id, End::Node(from), End::Node(to), EdgeStyle::Orthogonal);
+        e.end_head = Head::Arrow;
+        self.edges.push(e);
         id
     }
 
-    /// Adds a straight line from a preset.
-    pub fn add_line(&mut self, from: End, to: End, preset: &LinePreset) -> Id {
+    /// Adds a straight pointer line.
+    pub fn add_pointer(&mut self, from: End, to: End, kind: PointerKind, const_target: bool) -> Id {
         let id = self.alloc_id();
-        self.edges.push(Edge {
-            id,
-            from,
-            to,
-            label: String::new(),
-            color: BLACK,
-            width: 1.0,
-            pattern: preset.pattern,
-            dashed: false,
-            start_arrow: preset.start_arrow,
-            end_arrow: preset.end_arrow,
-            style: EdgeStyle::Straight,
-        });
+        let mut e = Edge::new(id, from, to, EdgeStyle::Straight);
+        e.pointer = Some(kind);
+        e.const_target = const_target;
+        self.edges.push(e);
         id
     }
 
     /// Converts fields from older file versions.
     pub fn migrate(&mut self) {
         for e in &mut self.edges {
-            if std::mem::take(&mut e.dashed) {
+            let old = std::mem::take(&mut e.legacy);
+            if old.dashed {
                 e.pattern = LinePattern::Dashed;
+            }
+            if old.start_arrow {
+                e.start_head = Head::Arrow;
+            }
+            if old.end_arrow {
+                e.end_head = Head::Arrow;
             }
         }
     }
@@ -434,6 +533,11 @@ impl Diagram {
 
     /// Route of an edge, from the source outline to the target outline.
     pub fn edge_path(&self, e: &Edge) -> Option<Vec<Pos2>> {
+        if let (End::Node(a), End::Node(b)) = (e.from, e.to) {
+            if a == b {
+                return self.node(a).map(self_loop_path);
+            }
+        }
         let ca = self.end_center(e.from)?;
         let cb = self.end_center(e.to)?;
         let (a, b) = (e.from, e.to);
@@ -554,10 +658,22 @@ pub fn dist_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     p.distance(a + ab * t)
 }
 
-/// Point halfway along a polyline (by length).
-pub fn polyline_midpoint(pts: &[Pos2]) -> Pos2 {
-    let total: f32 = pts.windows(2).map(|s| s[0].distance(s[1])).sum();
-    let mut remaining = total / 2.0;
+/// Route for a line from a shape back to itself: a rectangular loop off the right side,
+/// leaving above the middle and coming back in below it.
+pub fn self_loop_path(n: &Node) -> Vec<Pos2> {
+    let r = n.rect();
+    let c = r.center();
+    let d = (r.height() / 4.0).min(20.0);
+    let out = r.right() + 40.0;
+    // Aim at the right edge at the loop's heights (exact for boxes, close for other outlines).
+    let start = n.boundary_point(pos2(r.right(), c.y - d));
+    let end = n.boundary_point(pos2(r.right(), c.y + d));
+    vec![start, pos2(out, start.y), pos2(out, end.y), end]
+}
+
+/// Point `dist` along a polyline (clamped to its ends).
+pub fn polyline_point_at(pts: &[Pos2], dist: f32) -> Pos2 {
+    let mut remaining = dist.max(0.0);
     for s in pts.windows(2) {
         let len = s[0].distance(s[1]);
         if len >= remaining && len > 0.0 {
@@ -565,40 +681,117 @@ pub fn polyline_midpoint(pts: &[Pos2]) -> Pos2 {
         }
         remaining -= len;
     }
-    pts.first().copied().unwrap_or(Pos2::ZERO)
+    pts.last().copied().unwrap_or(Pos2::ZERO)
 }
 
-/// Shortens a polyline so arrowheads fit, and returns the arrowhead triangles.
-pub fn arrow_geometry(pts: &[Pos2], len: f32, start: bool, end: bool) -> (Vec<Pos2>, Vec<[Pos2; 3]>) {
+/// Point halfway along a polyline (by length).
+pub fn polyline_midpoint(pts: &[Pos2]) -> Pos2 {
+    let total: f32 = pts.windows(2).map(|s| s[0].distance(s[1])).sum();
+    polyline_point_at(pts, total / 2.0)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeadFill {
+    /// Filled with the line color.
+    Solid,
+    /// Outline with background fill.
+    Hollow,
+    /// Open polyline.
+    Open,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeadShape {
+    pub points: Vec<Pos2>,
+    pub fill: HeadFill,
+}
+
+/// Shortens a polyline so the end decorations fit, and returns their shapes.
+/// `len` is the arrowhead length; diamonds are twice as long.
+pub fn edge_geometry(pts: &[Pos2], len: f32, start: Head, end: Head) -> (Vec<Pos2>, Vec<HeadShape>) {
     let mut line = pts.to_vec();
     let mut heads = Vec::new();
     let n = line.len();
     if n < 2 {
         return (line, heads);
     }
-    let mut head = |tip: Pos2, from: Pos2| -> Option<Pos2> {
+    let mut head = |tip: Pos2, from: Pos2, kind: Head| -> Option<Pos2> {
         let v = tip - from;
-        if v.length() < 0.01 {
+        if kind == Head::None || v.length() < 0.01 {
             return None;
         }
         let dir = v.normalized();
         let perp = vec2(-dir.y, dir.x);
-        let base = tip - dir * len;
         let w = len * 0.4;
-        heads.push([tip, base + perp * w, base - perp * w]);
-        Some(base)
+        let base = tip - dir * len;
+        let (points, fill, line_end) = match kind {
+            Head::Arrow => (vec![tip, base + perp * w, base - perp * w], HeadFill::Solid, base),
+            Head::OpenArrow => (vec![base + perp * w, tip, base - perp * w], HeadFill::Open, tip),
+            Head::Diamond | Head::HollowDiamond => {
+                let back = tip - dir * len * 2.0;
+                let fill = if kind == Head::Diamond { HeadFill::Solid } else { HeadFill::Hollow };
+                (vec![tip, base + perp * w, back, base - perp * w], fill, back)
+            }
+            Head::None => return None,
+        };
+        heads.push(HeadShape { points, fill });
+        Some(line_end)
     };
-    if end {
-        if let Some(base) = head(line[n - 1], line[n - 2]) {
-            line[n - 1] = base;
-        }
+    if let Some(p) = head(line[n - 1], line[n - 2], end) {
+        line[n - 1] = p;
     }
-    if start {
-        if let Some(base) = head(line[0], line[1]) {
-            line[0] = base;
-        }
+    if let Some(p) = head(line[0], line[1], start) {
+        line[0] = p;
     }
     (line, heads)
+}
+
+/// Center for a line's label of the given size: the midpoint for plain lines; for pointers, near
+/// the target end on the opposite side from the badge (where UML puts member/role names).
+pub fn label_center(pointer: bool, pts: &[Pos2], len: f32, size: Vec2) -> Pos2 {
+    if pointer {
+        let reversed: Vec<Pos2> = pts.iter().rev().copied().collect();
+        badge_center(&reversed, len, size, false)
+    } else {
+        polyline_midpoint(pts)
+    }
+}
+
+/// Center for a pointer's badge of the given size: just past the source decoration (which is at
+/// most `2 * len` long), beside the line (above it, or to the right of vertical lines) so it
+/// covers neither the decoration nor the line's own label. `above = false` puts it on the other side.
+pub fn badge_center(pts: &[Pos2], len: f32, size: Vec2, above: bool) -> Pos2 {
+    if pts.len() < 2 {
+        return pts.first().copied().unwrap_or(Pos2::ZERO);
+    }
+    let total: f32 = pts.windows(2).map(|s| s[0].distance(s[1])).sum();
+    let start = (len * 2.0 + 4.0).min(total / 2.0);
+    let at = polyline_point_at(pts, start);
+    // Direction of the segment containing `at`.
+    let mut walked = 0.0;
+    let mut dir = (pts[1] - pts[0]).normalized();
+    for s in pts.windows(2) {
+        let l = s[0].distance(s[1]);
+        if walked + l >= start && l > 0.0 {
+            dir = (s[1] - s[0]) / l;
+            break;
+        }
+        walked += l;
+    }
+    if !dir.x.is_finite() {
+        return at;
+    }
+    let mut normal = vec2(-dir.y, dir.x);
+    if normal.y > 0.1 || (normal.y.abs() <= 0.1 && normal.x < 0.0) {
+        normal = -normal;
+    }
+    if !above {
+        normal = -normal;
+    }
+    let half = size / 2.0;
+    let along = half.x * dir.x.abs() + half.y * dir.y.abs();
+    let across = half.x * normal.x.abs() + half.y * normal.y.abs() + 3.0;
+    at + dir * along + normal * across
 }
 
 #[cfg(test)]
@@ -685,12 +878,12 @@ mod line_tests {
     fn free_line_path_and_attach() {
         let mut d = Diagram::default();
         let n = d.add_node(ShapeKind::Rectangle, pos2(0.0, 0.0)); // 120x60 around origin
-        let free = d.add_line(End::point(pos2(200.0, 0.0)), End::point(pos2(300.0, 50.0)), &LINE_PRESETS[1]);
+        let free = d.add_pointer(End::point(pos2(200.0, 0.0)), End::point(pos2(300.0, 50.0)), PointerKind::Raw, false);
         let path = d.edge_path(d.edge(free).unwrap()).unwrap();
         assert_eq!(path, vec![pos2(200.0, 0.0), pos2(300.0, 50.0)]);
 
         // Half-attached: starts at the shape's outline, aimed at the free end.
-        let half = d.add_line(End::Node(n), End::point(pos2(200.0, 0.0)), &LINE_PRESETS[0]);
+        let half = d.add_pointer(End::Node(n), End::point(pos2(200.0, 0.0)), PointerKind::Unique, false);
         let path = d.edge_path(d.edge(half).unwrap()).unwrap();
         assert!(path[0].distance(pos2(60.0, 0.0)) < 1e-3, "{:?}", path[0]);
 
@@ -704,10 +897,11 @@ mod line_tests {
     fn ends_serialize_untagged_and_old_files_load() {
         let mut d = Diagram::default();
         let n = d.add_node(ShapeKind::Rectangle, pos2(0.0, 0.0));
-        d.add_line(End::Node(n), End::point(pos2(5.0, 6.0)), &LINE_PRESETS[3]);
+        d.add_pointer(End::Node(n), End::point(pos2(5.0, 6.0)), PointerKind::Shared, true);
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains(r#""from":1"#) && json.contains(r#""to":[5.0,6.0]"#), "{json}");
-        assert!(!json.contains("dashed"));
+        assert!(!json.contains("dashed") && !json.contains("end_arrow"));
+        assert!(json.contains(r#""pointer":"Shared""#) && json.contains(r#""const_target":true"#), "{json}");
         let back: Diagram = serde_json::from_str(&json).unwrap();
         assert_eq!(back, d);
 
@@ -718,17 +912,79 @@ mod line_tests {
         d.migrate();
         assert_eq!(d.edges[0].from, End::Node(1));
         assert_eq!(d.edges[0].pattern, LinePattern::Dashed);
+        assert_eq!(d.edges[0].end_head, Head::Arrow);
+        assert_eq!(d.edges[0].start_head, Head::None);
+        assert_eq!(d.edges[0].pointer, None);
     }
 
     #[test]
     fn copy_includes_selected_free_lines_only() {
         let mut d = Diagram::default();
-        let a = d.add_line(End::point(pos2(0.0, 0.0)), End::point(pos2(10.0, 0.0)), &LINE_PRESETS[0]);
-        let _b = d.add_line(End::point(pos2(0.0, 9.0)), End::point(pos2(10.0, 9.0)), &LINE_PRESETS[0]);
+        let a = d.add_pointer(End::point(pos2(0.0, 0.0)), End::point(pos2(10.0, 0.0)), PointerKind::Reference, false);
+        let _b = d.add_pointer(End::point(pos2(0.0, 9.0)), End::point(pos2(10.0, 9.0)), PointerKind::Reference, false);
         let clip = d.copy_subset(&[a].into_iter().collect());
         assert_eq!(clip.edges.len(), 1);
         let new = d.paste(&clip, vec2(5.0, 5.0));
         let pasted = d.edge(*new.iter().next().unwrap()).unwrap();
         assert_eq!(pasted.from, End::Point([5.0, 5.0]));
+    }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+
+    #[test]
+    fn pointer_kinds_have_distinct_looks_and_badges() {
+        let looks: Vec<_> = PointerKind::ALL.iter().map(|k| k.look()).collect();
+        for (i, a) in looks.iter().enumerate() {
+            for b in &looks[i + 1..] {
+                assert_ne!(a, b, "two pointer kinds look the same");
+            }
+        }
+        assert_eq!(PointerKind::Raw.badge(true), "const *");
+        assert_eq!(PointerKind::Reference.badge(false), "&");
+        assert_eq!(PointerKind::Unique.badge(true), "unique_ptr<const>");
+    }
+
+    #[test]
+    fn pointer_look_overrides_plain_line_settings() {
+        let mut d = Diagram::default();
+        let id = d.add_pointer(End::point(pos2(0.0, 0.0)), End::point(pos2(100.0, 0.0)), PointerKind::Unique, false);
+        let e = d.edge_mut(id).unwrap();
+        e.pattern = LinePattern::Dotted; // ignored while it is a pointer
+        assert_eq!(e.look(), (LinePattern::Solid, Head::Diamond, Head::Arrow));
+        e.pointer = None;
+        assert_eq!(e.look(), (LinePattern::Dotted, Head::None, Head::None));
+    }
+
+    #[test]
+    fn heads_shorten_the_line_to_their_base() {
+        let pts = [pos2(0.0, 0.0), pos2(100.0, 0.0)];
+        let (line, heads) = edge_geometry(&pts, 10.0, Head::Diamond, Head::OpenArrow);
+        assert_eq!(line[0], pos2(20.0, 0.0), "diamond is two head lengths long");
+        assert_eq!(line[1], pos2(100.0, 0.0), "open arrow keeps the line to the tip");
+        assert_eq!(heads.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod self_pointer_tests {
+    use super::*;
+
+    #[test]
+    fn self_pointer_loops_off_the_right_side() {
+        let mut d = Diagram::default();
+        let n = d.add_node(ShapeKind::Class, pos2(0.0, 0.0)); // 160x100 around origin
+        let id = d.add_pointer(End::Node(n), End::Node(n), PointerKind::Raw, false);
+        let path = d.edge_path(d.edge(id).unwrap()).unwrap();
+        assert_eq!(path.len(), 4);
+        // Leaves and re-enters on the right edge, at different heights, with the loop outside.
+        assert!((path[0].x - 80.0).abs() < 1e-3 && (path[3].x - 80.0).abs() < 1e-3);
+        assert!(path[0].y < path[3].y);
+        assert!(path[1].x > 80.0 && path[2].x > 80.0);
+        assert!((path[3].y - path[0].y - 40.0).abs() < 1e-3, "loop spans 2 * 20 units");
+        // Selectable by clicking the loop.
+        assert_eq!(d.edge_at(pos2(120.0, 0.0), 3.0), Some(id));
     }
 }
