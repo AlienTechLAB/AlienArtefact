@@ -39,21 +39,9 @@ pub fn class_header_height(font_size: f32, box_height: f32) -> f32 {
 }
 
 impl ShapeKind {
-    /// Shapes in the "UML" palette section.
-    pub const UML: [ShapeKind; 1] = [ShapeKind::Class];
-
-    /// Shapes in the "General" palette section.
-    pub const ALL: [ShapeKind; 9] = [
-        ShapeKind::Rectangle,
-        ShapeKind::Rounded,
-        ShapeKind::Ellipse,
-        ShapeKind::Diamond,
-        ShapeKind::Triangle,
-        ShapeKind::Hexagon,
-        ShapeKind::Parallelogram,
-        ShapeKind::Cylinder,
-        ShapeKind::Text,
-    ];
+    /// Shapes offered in the "Objects" palette section. The other kinds can no longer be
+    /// created, but stay so diagrams that contain them still open and draw.
+    pub const OBJECTS: [ShapeKind; 1] = [ShapeKind::Class];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -68,11 +56,6 @@ impl ShapeKind {
             ShapeKind::Text => "Text",
             ShapeKind::Class => "Class / struct",
         }
-    }
-
-    /// Every shape kind, for pickers.
-    pub fn every() -> impl Iterator<Item = ShapeKind> {
-        Self::ALL.into_iter().chain(Self::UML)
     }
 
     pub fn default_size(self) -> Vec2 {

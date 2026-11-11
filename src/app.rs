@@ -316,16 +316,10 @@ impl App {
         }
     }
 
-    /// Pastes clipboard text: our own shapes, or plain text as a new text shape.
+    /// Pastes objects and pointers copied from this app; other clipboard text is ignored.
     fn paste_text(&mut self, text: &str) {
         if let Ok(clip) = serde_json::from_str::<Clip>(text) {
             self.paste_clip(clip);
-        } else if !text.trim().is_empty() {
-            let center = self.to_world(self.canvas_rect.center());
-            let id = self.add_node_at(ShapeKind::Text, center);
-            if let Some(n) = self.diagram.node_mut(id) {
-                n.text = text.trim().to_owned();
-            }
         }
     }
 
@@ -567,9 +561,7 @@ impl App {
 
     fn palette(&mut self, ui: &mut Ui) {
         ui.add_space(4.0);
-        self.palette_section(ui, "UML", &ShapeKind::UML);
-        ui.add_space(8.0);
-        self.palette_section(ui, "General", &ShapeKind::ALL);
+        self.palette_section(ui, "Objects", &ShapeKind::OBJECTS);
         ui.add_space(8.0);
         self.pointer_palette(ui);
     }
@@ -637,11 +629,7 @@ impl App {
                 let scale = ((rect.width() - 14.0) / size.x).min((rect.height() - 14.0) / size.y);
                 let icon = Rect::from_center_size(rect.center(), size * scale);
                 let stroke_col = ui.visuals().text_color();
-                if kind == ShapeKind::Text {
-                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "Text", egui::FontId::proportional(13.0), stroke_col);
-                } else {
-                    paint_shape(ui.painter(), kind, icon, Color32::WHITE, Stroke::new(1.2, stroke_col), scale, 12.0 * scale);
-                }
+                paint_shape(ui.painter(), kind, icon, Color32::WHITE, Stroke::new(1.2, stroke_col), scale, 12.0 * scale);
 
                 if resp.clicked() {
                     let n = self.diagram.nodes.len() as f32;
@@ -682,7 +670,7 @@ impl App {
                  Click an arrow to clone the shape in that direction.\n\
                  - Pick a pointer type in the Pointers section, then drag from the owner to the pointed-to object. \
                  Drag a selected pointer's end handles to re-attach it.\n\
-                 - Double-click to edit text; double-click empty space to add text.\n\
+                 - Double-click an object or pointer to edit its name or label.\n\
                  - Ctrl+wheel zooms, wheel scrolls, middle/right-drag pans.",
             );
             return;
@@ -735,17 +723,10 @@ impl App {
             ui.add_space(8.0);
             ui.strong("Style");
         } else {
-            ui.strong(if ids.len() == 1 { "Shape".to_owned() } else { format!("{} shapes", ids.len()) });
+            ui.strong(if ids.len() == 1 { "Object".to_owned() } else { format!("{} objects", ids.len()) });
         }
         ui.separator();
         egui::Grid::new("node_style").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            ui.label("Type");
-            egui::ComboBox::from_id_salt("node_kind").selected_text(n.kind.name()).show_ui(ui, |ui| {
-                for k in ShapeKind::every() {
-                    ui.selectable_value(&mut n.kind, k, k.name());
-                }
-            });
-            ui.end_row();
             ui.label("Fill");
             ui.color_edit_button_srgba_unmultiplied(&mut n.fill);
             ui.end_row();

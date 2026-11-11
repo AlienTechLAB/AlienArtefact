@@ -436,12 +436,8 @@ impl App {
     fn on_double_click(&mut self, p: Pos2) {
         let w = self.to_world(p);
         let hit = self.diagram.node_at(w).or_else(|| self.diagram.edge_at(w, EDGE_HIT / self.zoom));
-        match hit {
-            Some(id) => self.start_editing(id),
-            None => {
-                let id = self.add_node_at(ShapeKind::Text, w);
-                self.start_editing(id);
-            }
+        if let Some(id) = hit {
+            self.start_editing(id);
         }
     }
 
