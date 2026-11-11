@@ -108,9 +108,149 @@ pub struct Node {
     pub stroke_width: f32,
     pub text_color: Rgba,
     pub font_size: f32,
+    /// Fields and methods of a class or trait, in display order.
+    #[serde(default)]
+    pub members: Vec<Member>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemberKind {
+    Field,
+    Method,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Visibility {
+    Public,
+    Protected,
+    Private,
+}
+
+impl Visibility {
+    pub const ALL: [Visibility; 3] = [Visibility::Public, Visibility::Protected, Visibility::Private];
+
+    /// UML visibility marker.
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Visibility::Public => "+",
+            Visibility::Protected => "#",
+            Visibility::Private => "-",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Visibility::Public => "public",
+            Visibility::Protected => "protected",
+            Visibility::Private => "private",
+        }
+    }
+}
+
+/// A field or method of an object.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Member {
+    pub kind: MemberKind,
+    pub visibility: Visibility,
+    pub name: String,
+    /// Field type, or method return type. Empty means none (e.g. a method returning nothing).
+    #[serde(default)]
+    pub ty: String,
+    /// Method parameter list as written between the parentheses. Unused for fields.
+    #[serde(default)]
+    pub params: String,
+    /// Belongs to the type rather than to each value (UML: underlined).
+    #[serde(default)]
+    pub is_static: bool,
+}
+
+impl Member {
+    /// A new member with a placeholder name, numbered after the existing ones of its kind.
+    /// Fields start private and methods public; trait members are always public.
+    pub fn new(kind: MemberKind, owner: ShapeKind, existing: &[Member]) -> Self {
+        let n = existing.iter().filter(|m| m.kind == kind).count() + 1;
+        let (name, visibility) = match kind {
+            MemberKind::Field => (format!("field{n}"), Visibility::Private),
+            MemberKind::Method => (format!("method{n}"), Visibility::Public),
+        };
+        let visibility = if owner == ShapeKind::Trait { Visibility::Public } else { visibility };
+        Self { kind, visibility, name, ty: String::new(), params: String::new(), is_static: false }
+    }
+
+    /// UML text, e.g. `- count: int` or `+ draw(ctx: Context): bool`.
+    pub fn text(&self) -> String {
+        let mut s = format!("{} {}", self.visibility.symbol(), self.name);
+        if self.kind == MemberKind::Method {
+            s.push('(');
+            s.push_str(&self.params);
+            s.push(')');
+        }
+        if !self.ty.trim().is_empty() {
+            s.push_str(": ");
+            s.push_str(self.ty.trim());
+        }
+        s
+    }
+}
+
+/// Where an object's members go, in world units relative to the object's top-left corner.
+pub struct BodyLayout<'a> {
+    /// Each member with the vertical center of its line.
+    pub lines: Vec<(&'a Member, f32)>,
+    /// Vertical positions of compartment separators below the header.
+    pub separators: Vec<f32>,
+    /// Height needed to show the header and all members.
+    pub height: f32,
+    /// Left text inset.
+    pub pad: f32,
 }
 
 impl Node {
+    /// Members laid out in UML compartments: for a class, fields then methods; for a trait,
+    /// methods only. Classes without members keep a plain empty body.
+    pub fn body_layout<'a>(&'a self) -> BodyLayout<'a> {
+        let f = self.font_size;
+        let line = f * 1.45;
+        let pad = f * 0.45;
+        let mut y = header_height(self.kind, f, f32::INFINITY);
+        let mut lines = Vec::new();
+        let mut separators = Vec::new();
+        let fields: Vec<&Member> = self.members.iter().filter(|m| m.kind == MemberKind::Field).collect();
+        let methods: Vec<&Member> = self.members.iter().filter(|m| m.kind == MemberKind::Method).collect();
+        let place = |list: &[&'a Member], y: &mut f32, lines: &mut Vec<(&'a Member, f32)>| {
+            *y += pad;
+            for m in list {
+                lines.push((*m, *y + line / 2.0));
+                *y += line;
+            }
+            *y += pad;
+        };
+        if self.kind == ShapeKind::Class && !self.members.is_empty() {
+            place(&fields, &mut y, &mut lines);
+            separators.push(y);
+            place(&methods, &mut y, &mut lines);
+        } else if !methods.is_empty() {
+            place(&methods, &mut y, &mut lines);
+        }
+        // Keep at least a little body below the header, like an empty class.
+        let header = header_height(self.kind, f, f32::INFINITY);
+        let height = y.max(header + line * 1.5);
+        BodyLayout { lines, separators, height, pad }
+    }
+
+    /// Smallest size that shows the name and every member, given a text measurer
+    /// (`measure(text)` = width in world units at this object's font size).
+    pub fn required_size(&self, measure: impl Fn(&str) -> f32) -> Vec2 {
+        let layout = self.body_layout();
+        let name_w = measure(&self.text) + layout.pad * 4.0;
+        let members_w = self
+            .members
+            .iter()
+            .map(|m| measure(&m.text()) + layout.pad * 2.0 + 4.0)
+            .fold(0.0, f32::max);
+        vec2(name_w.max(members_w), layout.height)
+    }
+
     pub fn new(id: Id, kind: ShapeKind, center: Pos2) -> Self {
         let size = kind.default_size();
         let min = center - size / 2.0;
@@ -131,6 +271,7 @@ impl Node {
             stroke_width: 1.0,
             text_color: BLACK,
             font_size: 12.0,
+            members: Vec::new(),
         }
     }
 
@@ -369,16 +510,34 @@ pub enum RelationKind {
     Related,
     /// A class implements a trait. Only valid from a class to a trait.
     Implements,
+    /// Derived -> base. Valid from a class to another class, or from a trait to another
+    /// trait (supertrait / extended interface).
+    Inherits,
 }
 
 impl RelationKind {
-    pub const ALL: [RelationKind; 2] = [RelationKind::Related, RelationKind::Implements];
+    pub const ALL: [RelationKind; 3] = [RelationKind::Related, RelationKind::Implements, RelationKind::Inherits];
 
     pub fn name(self) -> &'static str {
         match self {
             RelationKind::Related => "Related",
             RelationKind::Implements => "Implements",
+            RelationKind::Inherits => "Inheritance",
         }
+    }
+
+    /// Where this relation may go, for tooltips and the format panel.
+    pub fn rule(self) -> &'static str {
+        match self {
+            RelationKind::Related => "Between any two objects",
+            RelationKind::Implements => "From a class to the trait it implements",
+            RelationKind::Inherits => "From the derived class to its base class (or trait to supertrait)",
+        }
+    }
+
+    /// Needs an object at both ends (cannot be placed by a single click).
+    pub fn needs_two_objects(self) -> bool {
+        !matches!(self, RelationKind::Related)
     }
 
     /// Line pattern, source head, target head.
@@ -386,6 +545,7 @@ impl RelationKind {
         match self {
             RelationKind::Related => (LinePattern::Dotted, Head::None, Head::None),
             RelationKind::Implements => (LinePattern::Dashed, Head::None, Head::HollowArrow),
+            RelationKind::Inherits => (LinePattern::Solid, Head::None, Head::HollowArrow),
         }
     }
 }
@@ -546,6 +706,7 @@ impl Diagram {
     }
 
     /// Adds an orthogonal arrow connector between two shapes.
+    #[cfg(test)]
     pub fn add_edge(&mut self, from: Id, to: Id) -> Id {
         let id = self.alloc_id();
         let mut e = Edge::new(id, End::Node(from), End::Node(to), EdgeStyle::Orthogonal);
@@ -595,20 +756,48 @@ impl Diagram {
         if self.link_allowed(kind, from, to) {
             return None;
         }
-        let rule = format!("\"{}\" must go from a class to the trait it implements.", kind.name());
-        let reason = match (self.node_kind(from), self.node_kind(to)) {
-            (Some(ShapeKind::Trait), Some(ShapeKind::Class)) => {
-                "The direction is reversed: draw it from the class to the trait.".to_owned()
-            }
-            (Some(ShapeKind::Class), Some(_)) => format!(
-                "{}, and only a trait can be implemented.",
-                self.describe(to)
+        use ShapeKind::{Class, Trait};
+        let (fk, tk) = (self.node_kind(from), self.node_kind(to));
+        let (reason, rule) = match kind {
+            LinkKind::Relation(RelationKind::Implements) => (
+                match (fk, tk) {
+                    (Some(Trait), Some(Class)) => {
+                        "The direction is reversed: draw it from the class to the trait.".to_owned()
+                    }
+                    (Some(Class), Some(_)) => format!("{}, and only a trait can be implemented.", self.describe(to)),
+                    (Some(Class), None) => "It has to end on the trait being implemented.".to_owned(),
+                    (Some(_), _) => format!("{}, and only a class can implement a trait.", self.describe(from)),
+                    (None, _) => "It has to start on the class that implements the trait.".to_owned(),
+                },
+                "\"Implements\" must go from a class to the trait it implements.",
             ),
-            (Some(ShapeKind::Class), None) => "It has to end on the trait being implemented.".to_owned(),
-            (Some(_), _) => format!("{}, and only a class can implement a trait.", self.describe(from)),
-            (None, _) => "It has to start on the class that implements the trait.".to_owned(),
+            LinkKind::Relation(RelationKind::Inherits) => (
+                match (fk, tk) {
+                    (None, _) => "It has to start on the derived class.".to_owned(),
+                    (_, None) => "It has to end on the base class.".to_owned(),
+                    _ if from == to => match fk {
+                        Some(Trait) => format!("{}. A trait cannot extend itself.", self.describe(from)),
+                        _ => format!("{}. A class cannot derive from itself.", self.describe(from)),
+                    },
+                    (Some(Class), Some(Trait)) => format!(
+                        "{}. A class doesn't inherit from a trait; use \"Implements\" for that.",
+                        self.describe(to)
+                    ),
+                    (Some(Trait), Some(Class)) => {
+                        format!("{}, and a trait can't inherit from a class.", self.describe(to))
+                    }
+                    _ => "Only classes and traits can take part in inheritance.".to_owned(),
+                },
+                "\"Inheritance\" goes from the derived class to its base class, \
+                 or from a trait to the trait it extends.",
+            ),
+            LinkKind::Relation(RelationKind::Related) => (
+                format!("{}. An object can't be related to itself.", self.describe(from)),
+                "\"Related\" connects two different objects.",
+            ),
+            _ => ("This connection is not allowed.".to_owned(), ""),
         };
-        Some(format!("{reason}\n\n{rule}"))
+        Some(format!("{reason}\n\n{rule}").trim_end().to_owned())
     }
 
     /// Whether a line of this kind may connect `from` to `to`.
@@ -617,6 +806,11 @@ impl Diagram {
             LinkKind::Relation(RelationKind::Implements) => {
                 self.node_kind(from) == Some(ShapeKind::Class) && self.node_kind(to) == Some(ShapeKind::Trait)
             }
+            LinkKind::Relation(RelationKind::Inherits) => {
+                let (fk, tk) = (self.node_kind(from), self.node_kind(to));
+                from != to && fk.is_some_and(|k| k.is_object()) && fk == tk
+            }
+            LinkKind::Relation(RelationKind::Related) => from.node().is_none() || from != to,
             _ => true,
         }
     }
@@ -1238,5 +1432,121 @@ mod relation_tests {
         let old = json.replace(r#","relation":"Implements""#, "");
         let back: Diagram = serde_json::from_str(&old).unwrap();
         assert_eq!(back.edges[0].relation, None);
+    }
+}
+
+#[cfg(test)]
+mod inheritance_tests {
+    use super::*;
+
+    const INHERITS: LinkKind = LinkKind::Relation(RelationKind::Inherits);
+
+    #[test]
+    fn inheritance_between_same_kind_objects_only() {
+        let mut d = Diagram::default();
+        let base = End::Node(d.add_node(ShapeKind::Class, pos2(0.0, 0.0)));
+        let derived = End::Node(d.add_node(ShapeKind::Class, pos2(0.0, 300.0)));
+        let t1 = End::Node(d.add_node(ShapeKind::Trait, pos2(300.0, 0.0)));
+        let t2 = End::Node(d.add_node(ShapeKind::Trait, pos2(300.0, 300.0)));
+        let free = End::point(pos2(900.0, 900.0));
+
+        assert!(d.link_allowed(INHERITS, derived, base));
+        assert!(d.link_allowed(INHERITS, t2, t1), "supertrait");
+        assert!(!d.link_allowed(INHERITS, base, base), "itself");
+        assert!(!d.link_allowed(INHERITS, derived, t1), "class -> trait is Implements");
+        assert!(!d.link_allowed(INHERITS, t1, base), "trait -> class");
+        assert!(!d.link_allowed(INHERITS, derived, free));
+
+        assert!(d.link_error(INHERITS, derived, t1).unwrap().contains("use \"Implements\""));
+        assert!(d.link_error(INHERITS, base, base).unwrap().contains("A class cannot derive from itself"));
+        assert!(d.link_error(INHERITS, t1, t1).unwrap().contains("A trait cannot extend itself"));
+        let related = LinkKind::Relation(RelationKind::Related);
+        assert!(!d.link_allowed(related, base, base));
+        assert!(d.link_error(related, base, base).unwrap().contains("related to itself"));
+        assert!(d.link_allowed(related, base, derived));
+        assert!(d.link_error(INHERITS, derived, free).unwrap().contains("end on the base class"));
+        assert!(d.link_error(INHERITS, free, base).unwrap().contains("start on the derived class"));
+        assert_eq!(d.link_error(INHERITS, derived, base), None);
+    }
+
+    #[test]
+    fn inheritance_looks_like_uml_generalization() {
+        assert_eq!(RelationKind::Inherits.look(), (LinePattern::Solid, Head::None, Head::HollowArrow));
+        assert!(RelationKind::Inherits.needs_two_objects() && !RelationKind::Related.needs_two_objects());
+    }
+}
+
+#[cfg(test)]
+mod member_tests {
+    use super::*;
+
+    fn field(name: &str, ty: &str, v: Visibility) -> Member {
+        Member { kind: MemberKind::Field, visibility: v, name: name.into(), ty: ty.into(), params: String::new(), is_static: false }
+    }
+
+    #[test]
+    fn member_text_uses_uml_notation() {
+        assert_eq!(field("count", "int", Visibility::Private).text(), "- count: int");
+        assert_eq!(field("id", "", Visibility::Protected).text(), "# id");
+        let m = Member {
+            kind: MemberKind::Method,
+            visibility: Visibility::Public,
+            name: "draw".into(),
+            ty: "bool".into(),
+            params: "ctx: Context".into(),
+            is_static: true,
+        };
+        assert_eq!(m.text(), "+ draw(ctx: Context): bool");
+        let mut no_ret = m.clone();
+        no_ret.ty.clear();
+        assert_eq!(no_ret.text(), "+ draw(ctx: Context)");
+    }
+
+    #[test]
+    fn new_members_get_numbered_names_and_sensible_visibility() {
+        let mut ms = vec![];
+        ms.push(Member::new(MemberKind::Field, ShapeKind::Class, &ms));
+        ms.push(Member::new(MemberKind::Field, ShapeKind::Class, &ms));
+        ms.push(Member::new(MemberKind::Method, ShapeKind::Class, &ms));
+        assert_eq!((ms[1].name.as_str(), ms[1].visibility), ("field2", Visibility::Private));
+        assert_eq!((ms[2].name.as_str(), ms[2].visibility), ("method1", Visibility::Public));
+        assert_eq!(Member::new(MemberKind::Field, ShapeKind::Trait, &[]).visibility, Visibility::Public);
+    }
+
+    #[test]
+    fn class_layout_has_field_and_method_compartments() {
+        let mut n = Node::new(1, ShapeKind::Class, pos2(0.0, 0.0));
+        let empty = n.body_layout();
+        assert!(empty.lines.is_empty() && empty.separators.is_empty());
+
+        n.members.push(field("a", "int", Visibility::Private));
+        n.members.push(Member::new(MemberKind::Method, ShapeKind::Class, &n.members));
+        n.members.push(field("b", "int", Visibility::Private));
+        let l = n.body_layout();
+        // Fields first (in order), then the separator, then methods.
+        let names: Vec<&str> = l.lines.iter().map(|(m, _)| m.name.as_str()).collect();
+        assert_eq!(names, ["a", "b", "method1"]);
+        assert_eq!(l.separators.len(), 1);
+        assert!(l.lines[1].1 < l.separators[0] && l.separators[0] < l.lines[2].1);
+        assert!(l.height > l.lines[2].1);
+
+        // Required size grows with members; measurement is supplied by the caller.
+        let need = n.required_size(|s| s.len() as f32 * 7.0);
+        assert!(need.y >= l.height && need.x > 0.0);
+    }
+
+    #[test]
+    fn trait_layout_has_methods_only_and_old_files_load() {
+        let mut t = Node::new(1, ShapeKind::Trait, pos2(0.0, 0.0));
+        t.members.push(Member::new(MemberKind::Method, ShapeKind::Trait, &[]));
+        let l = t.body_layout();
+        assert_eq!(l.lines.len(), 1);
+        assert!(l.separators.is_empty());
+
+        let json = serde_json::to_string(&Node::new(2, ShapeKind::Class, pos2(0.0, 0.0))).unwrap();
+        let old = json.replace(r#","members":[]"#, "");
+        assert!(!old.contains("members"));
+        let back: Node = serde_json::from_str(&old).unwrap();
+        assert!(back.members.is_empty());
     }
 }

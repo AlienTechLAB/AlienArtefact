@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use egui::{vec2, Color32, Event, Key, Modifiers, Pos2, Rect, Sense, Stroke, Ui, Vec2, ViewportCommand};
 
 use crate::canvas::{Drag, LinkError};
-use crate::model::{Clip, Diagram, EdgeStyle, Head, Id, LinePattern, LinkKind, PointerKind, RelationKind, ShapeKind};
+use crate::model::{
+    Clip, Diagram, EdgeStyle, Head, Id, LinePattern, LinkKind, Member, MemberKind, Node, PointerKind, RelationKind,
+    ShapeKind, Visibility,
+};
 use crate::render::{paint_edge, paint_shape};
 
 const MAX_UNDO: usize = 200;
@@ -18,7 +21,6 @@ pub struct App {
     pub zoom: f32,
     pub canvas_rect: Rect,
     pub drag: Drag,
-    pub hovered: Option<Id>,
     pub editing: Option<Id>,
     pub edit_focus: bool,
     pub palette_drag: Option<ShapeKind>,
@@ -56,7 +58,6 @@ impl Default for App {
             zoom: 1.0,
             canvas_rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)),
             drag: Drag::None,
-            hovered: None,
             editing: None,
             edit_focus: false,
             palette_drag: None,
@@ -91,7 +92,7 @@ impl eframe::App for App {
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::Panel::left("shapes").resizable(true).default_size(140.0).show(ui, |ui| self.palette(ui));
-        egui::Panel::right("format").resizable(true).default_size(240.0).show(ui, |ui| {
+        egui::Panel::right("format").resizable(true).default_size(320.0).size_range(220.0..=560.0).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| self.format_panel(ui));
         });
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
@@ -161,7 +162,6 @@ impl App {
         self.selection.clear();
         self.editing = None;
         self.drag = Drag::None;
-        self.hovered = None;
         self.path = path;
     }
 
@@ -652,6 +652,12 @@ impl App {
         ui.horizontal_wrapped(|ui| {
             self.link_tile(ui, LinkKind::Relation(RelationKind::Related), "related", "click, then drag between two objects");
             self.link_tile(ui, LinkKind::Relation(RelationKind::Implements), "impl", "click, then drag from a class to a trait");
+            self.link_tile(
+                ui,
+                LinkKind::Relation(RelationKind::Inherits),
+                "inherit",
+                "click, then drag from the derived class to the base class",
+            );
         });
     }
 
@@ -739,8 +745,6 @@ impl App {
             ui.weak(
                 "Tips:\n\
                  - Click or drag shapes from the left panel.\n\
-                 - Hover a shape and drag a blue arrow to another shape to connect them. \
-                 Click an arrow to clone the shape in that direction.\n\
                  - Pick a pointer type in the Pointers section, then drag from the owner to the pointed-to object. \
                  Drag a selected pointer's end handles to re-attach it.\n\
                  - Double-click an object or pointer to edit its name or label.\n\
@@ -793,7 +797,8 @@ impl App {
                 ui.add(egui::TextEdit::singleline(&mut n.text).desired_width(f32::INFINITY));
                 ui.end_row();
             });
-            ui.add_space(8.0);
+            members_ui(ui, &mut n);
+            ui.add_space(12.0);
             ui.strong("Style");
         } else {
             ui.strong(if ids.len() == 1 { "Object".to_owned() } else { format!("{} objects", ids.len()) });
@@ -842,6 +847,15 @@ impl App {
             return;
         }
         if ids.len() == 1 {
+            // Grow the box so the name and all members stay visible.
+            if n.kind.is_object()
+                && (n.members != before.members || n.text != before.text || n.font_size != before.font_size)
+            {
+                let painter = ui.painter();
+                let font = egui::FontId::proportional(n.font_size);
+                let need = n.required_size(|s| painter.layout_no_wrap(s.to_owned(), font.clone(), Color32::BLACK).size().x);
+                n.size = [n.size[0].max(need.x), n.size[1].max(need.y)];
+            }
             *self.diagram.node_mut(ids[0]).unwrap() = n;
             return;
         }
@@ -880,12 +894,16 @@ impl App {
         };
         ui.strong(heading);
         ui.separator();
-        // "Implements" is only offered when every selected line runs from a class to a trait.
-        let implements = LinkKind::Relation(RelationKind::Implements);
-        let implements_ok = ids.iter().all(|id| {
-            let l = self.diagram.edge(*id).unwrap();
-            self.diagram.link_allowed(implements, l.from, l.to)
-        });
+        // A relation is only offered when every selected line fits its rule (e.g. class -> trait).
+        let relation_ok: Vec<bool> = RelationKind::ALL
+            .iter()
+            .map(|k| {
+                ids.iter().all(|id| {
+                    let l = self.diagram.edge(*id).unwrap();
+                    self.diagram.link_allowed(LinkKind::Relation(*k), l.from, l.to)
+                })
+            })
+            .collect();
         egui::Grid::new("edge_style").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
             ui.label("Type");
             let mut link = e.link();
@@ -896,12 +914,10 @@ impl App {
                         ui.selectable_value(&mut link, Some(LinkKind::Pointer(k)), k.name());
                     }
                     ui.separator();
-                    for k in RelationKind::ALL {
-                        let kind = LinkKind::Relation(k);
-                        let enabled = kind != implements || implements_ok;
-                        ui.add_enabled_ui(enabled, |ui| {
-                            ui.selectable_value(&mut link, Some(kind), k.name())
-                                .on_disabled_hover_text("Only from a class to a trait");
+                    for (k, ok) in RelationKind::ALL.into_iter().zip(&relation_ok) {
+                        ui.add_enabled_ui(*ok, |ui| {
+                            ui.selectable_value(&mut link, Some(LinkKind::Relation(k)), k.name())
+                                .on_disabled_hover_text(k.rule());
                         });
                     }
                 });
@@ -992,6 +1008,113 @@ impl App {
                 t.const_target = e.const_target;
             }
         }
+    }
+}
+
+/// Fields and Methods sections of the format panel for one class or trait.
+fn members_ui(ui: &mut Ui, n: &mut Node) {
+    if n.kind == ShapeKind::Class {
+        member_section(ui, n, MemberKind::Field, "Fields");
+    }
+    member_section(ui, n, MemberKind::Method, "Methods");
+}
+
+enum RowAction {
+    Up,
+    Down,
+    Remove,
+}
+
+fn member_section(ui: &mut Ui, n: &mut Node, kind: MemberKind, title: &str) {
+    let owner = n.kind;
+    let in_trait = owner == ShapeKind::Trait;
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.strong(title);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let label = if kind == MemberKind::Field { "+ Add field" } else { "+ Add method" };
+            if ui.small_button(label).clicked() {
+                let m = Member::new(kind, owner, &n.members);
+                n.members.push(m);
+            }
+        });
+    });
+    ui.separator();
+
+    let rows: Vec<usize> = (0..n.members.len()).filter(|&i| n.members[i].kind == kind).collect();
+    if rows.is_empty() {
+        ui.weak(if kind == MemberKind::Field { "No fields." } else { "No methods." });
+        return;
+    }
+    let mut action: Option<(usize, RowAction)> = None;
+    for (pos, &i) in rows.iter().enumerate() {
+        let m = &mut n.members[i];
+        ui.push_id(i, |ui| {
+            egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if in_trait {
+                        // Trait members are part of the interface: always public.
+                        m.visibility = Visibility::Public;
+                        ui.label("+").on_hover_text("Trait members are always public");
+                    } else {
+                        egui::ComboBox::from_id_salt("vis")
+                            .width(36.0)
+                            .selected_text(m.visibility.symbol())
+                            .show_ui(ui, |ui| {
+                                for v in Visibility::ALL {
+                                    ui.selectable_value(&mut m.visibility, v, format!("{}  {}", v.symbol(), v.name()));
+                                }
+                            })
+                            .response
+                            .on_hover_text(m.visibility.name());
+                    }
+                    // Right-to-left so the buttons get their real width and the name field fills
+                    // exactly what is left (fixed width estimates make the panel creep wider).
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("x").on_hover_text("Remove").clicked() {
+                            action = Some((pos, RowAction::Remove));
+                        }
+                        if ui
+                            .add_enabled(pos + 1 < rows.len(), egui::Button::new("v").small())
+                            .on_hover_text("Move down")
+                            .clicked()
+                        {
+                            action = Some((pos, RowAction::Down));
+                        }
+                        if ui.add_enabled(pos > 0, egui::Button::new("^").small()).on_hover_text("Move up").clicked() {
+                            action = Some((pos, RowAction::Up));
+                        }
+                        ui.add(egui::TextEdit::singleline(&mut m.name).hint_text("name").desired_width(f32::INFINITY));
+                    });
+                });
+                if m.kind == MemberKind::Method {
+                    ui.horizontal(|ui| {
+                        ui.label("params");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut m.params)
+                                .hint_text("a: int, b: &str")
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label(if m.kind == MemberKind::Method { "returns" } else { "type" });
+                    let hint = if m.kind == MemberKind::Method { "none" } else { "int" };
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.checkbox(&mut m.is_static, "static").on_hover_text("Belongs to the type, not to each value");
+                        ui.add(egui::TextEdit::singleline(&mut m.ty).hint_text(hint).desired_width(f32::INFINITY));
+                    });
+                });
+            });
+        });
+    }
+    match action {
+        Some((pos, RowAction::Up)) => n.members.swap(rows[pos], rows[pos - 1]),
+        Some((pos, RowAction::Down)) => n.members.swap(rows[pos], rows[pos + 1]),
+        Some((pos, RowAction::Remove)) => {
+            n.members.remove(rows[pos]);
+        }
+        None => {}
     }
 }
 

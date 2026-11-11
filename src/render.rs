@@ -5,7 +5,7 @@ use egui::{
     Stroke, StrokeKind,
 };
 
-use crate::model::{badge_center, edge_geometry, header_height, stereotype_height, outline, Head, HeadFill, LinePattern, ShapeKind};
+use crate::model::{badge_center, edge_geometry, header_height, stereotype_height, Node, outline, Head, HeadFill, LinePattern, ShapeKind};
 
 /// `font_px` is the shape's font size in screen pixels (sizes the class name compartment).
 pub fn paint_shape(
@@ -66,6 +66,34 @@ pub fn paint_shape(
                 painter.add(Shape::convex_polygon(pts, fill, stroke));
             }
         }
+    }
+}
+
+/// Paints an object's members inside its screen rect `r` (compartment lines and member text).
+pub fn paint_members(painter: &Painter, n: &Node, r: Rect, zoom: f32, stroke: Stroke) {
+    let layout = n.body_layout();
+    for y in &layout.separators {
+        let y = r.top() + y * zoom;
+        if y < r.bottom() {
+            painter.line_segment([pos2(r.left(), y), pos2(r.right(), y)], stroke);
+        }
+    }
+    let size = n.font_size * zoom;
+    if size < 3.0 {
+        return;
+    }
+    let color = Color32::from_rgba_unmultiplied(n.text_color[0], n.text_color[1], n.text_color[2], n.text_color[3]);
+    let clipped = painter.with_clip_rect(r.shrink(1.0).intersect(painter.clip_rect()));
+    for (m, y) in layout.lines {
+        let format = egui::TextFormat {
+            font_id: FontId::proportional(size),
+            color,
+            underline: if m.is_static { Stroke::new(1.0, color) } else { Stroke::NONE },
+            ..Default::default()
+        };
+        let galley = clipped.layout_job(LayoutJob::single_section(m.text(), format));
+        let pos = pos2(r.left() + layout.pad * zoom, r.top() + y * zoom - galley.size().y / 2.0);
+        clipped.galley(pos, galley, color);
     }
 }
 

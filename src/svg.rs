@@ -140,6 +140,36 @@ pub fn export(d: &Diagram) -> String {
             text_block(&mut out, center, stereotype, n.font_size * 0.85, n.stroke);
         }
         text_block(&mut out, n.text_rect().center(), &n.text, n.font_size, n.text_color);
+        if n.kind.is_object() {
+            let layout = n.body_layout();
+            for y in &layout.separators {
+                let y = r.top() + y;
+                if y < r.bottom() {
+                    let _ = writeln!(
+                        out,
+                        r#"<line x1="{:.1}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="{}" stroke-opacity="{}" stroke-width="{}"/>"#,
+                        r.left(),
+                        r.right(),
+                        hex(n.stroke),
+                        alpha(n.stroke),
+                        n.stroke_width
+                    );
+                }
+            }
+            for (m, y) in layout.lines {
+                let underline = if m.is_static { r#" text-decoration="underline""# } else { "" };
+                let _ = writeln!(
+                    out,
+                    r#"<text x="{:.1}" y="{:.1}" font-size="{}" fill="{}" fill-opacity="{}" dominant-baseline="middle"{underline}>{}</text>"#,
+                    r.left() + layout.pad,
+                    r.top() + y,
+                    n.font_size,
+                    hex(n.text_color),
+                    alpha(n.text_color),
+                    esc(&m.text())
+                );
+            }
+        }
     }
 
     for e in &d.edges {

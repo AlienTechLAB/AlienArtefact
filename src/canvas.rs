@@ -8,14 +8,12 @@ use egui::{
 };
 
 use crate::app::App;
-use crate::model::{color, label_center, End, Id, LinkKind, RelationKind, ShapeKind};
-use crate::render::{head_len, layout_centered, paint_badge, paint_edge, paint_shape, paint_text};
+use crate::model::{color, label_center, End, Id, LinkKind, ShapeKind};
+use crate::render::{head_len, layout_centered, paint_badge, paint_edge, paint_members, paint_shape, paint_text};
 
 pub const GRID: f32 = 10.0;
 const MIN_SIZE: f32 = 10.0;
 const HANDLE_HIT: f32 = 7.0;
-const ARROW_GAP: f32 = 22.0;
-const ARROW_HIT: f32 = 10.0;
 const EDGE_HIT: f32 = 6.0;
 const SEL: Color32 = Color32::from_rgb(0, 120, 215);
 const HOVER: Color32 = Color32::from_rgb(41, 182, 242);
@@ -36,7 +34,6 @@ pub enum Drag {
     Move { start: Pos2, orig: Vec<(Id, Pos2)>, edge_orig: Vec<(Id, End, End)> },
     Resize { id: Id, handle: usize, orig: Rect, start: Pos2 },
     Rubber { start: Pos2 },
-    Connect { from: Id },
     /// Dragging one end of a line (0 = start, 1 = end); dropping it on a shape attaches it.
     /// `orig` is where that end was, restored if the drop is not allowed.
     Endpoint { id: Id, end: usize, orig: End },
@@ -52,17 +49,6 @@ fn handle_positions(r: Rect) -> [Pos2; 8] {
     let (l, cx, rr) = (r.left(), r.center().x, r.right());
     let (t, cy, b) = (r.top(), r.center().y, r.bottom());
     [pos2(l, t), pos2(cx, t), pos2(rr, t), pos2(rr, cy), pos2(rr, b), pos2(cx, b), pos2(l, b), pos2(l, cy)]
-}
-
-/// Connection arrows around a shape (screen space): up, right, down, left.
-fn arrow_positions(r: Rect) -> [(Pos2, Vec2); 4] {
-    let c = r.center();
-    [
-        (pos2(c.x, r.top() - ARROW_GAP), vec2(0.0, -1.0)),
-        (pos2(r.right() + ARROW_GAP, c.y), vec2(1.0, 0.0)),
-        (pos2(c.x, r.bottom() + ARROW_GAP), vec2(0.0, 1.0)),
-        (pos2(r.left() - ARROW_GAP, c.y), vec2(-1.0, 0.0)),
-    ]
 }
 
 impl App {
@@ -109,29 +95,6 @@ impl App {
         self.diagram.node(id).map(|_| id)
     }
 
-    fn hover_target(&self, p: Pos2) -> Option<Id> {
-        if let Some(id) = self.diagram.node_at(self.to_world(p)) {
-            return Some(id);
-        }
-        // Stay on the last hovered shape while the pointer is near it, so its arrows can be reached.
-        let id = self.hovered?;
-        let n = self.diagram.node(id)?;
-        self.rect_to_screen(n.rect()).expand(ARROW_GAP + ARROW_HIT).contains(p).then_some(id)
-    }
-
-    fn arrow_hit(&self, p: Pos2) -> Option<(Id, usize)> {
-        let id = self.hovered?;
-        if self.editing == Some(id) {
-            return None;
-        }
-        let n = self.diagram.node(id)?;
-        let sr = self.rect_to_screen(n.rect());
-        arrow_positions(sr)
-            .iter()
-            .position(|(a, _)| a.distance(p) <= ARROW_HIT)
-            .map(|i| (id, i))
-    }
-
     pub fn canvas(&mut self, ui: &mut Ui) {
         let (rect, resp) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.canvas_rect = rect;
@@ -154,11 +117,6 @@ impl App {
             }
         }
 
-        if matches!(self.drag, Drag::None) {
-            self.hovered = pointer
-                .filter(|p| rect.contains(*p) && self.link_tool.is_none())
-                .and_then(|p| self.hover_target(p));
-        }
         if self.link_tool.is_some() && resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
@@ -256,11 +214,6 @@ impl App {
                 self.drag = Drag::Resize { id, handle, orig, start: w };
                 return;
             }
-        }
-
-        if let Some((from, _)) = self.arrow_hit(p) {
-            self.drag = Drag::Connect { from };
-            return;
         }
 
         let hit = self.diagram.node_at(w).or_else(|| self.diagram.edge_at(w, EDGE_HIT / self.zoom));
@@ -365,8 +318,10 @@ impl App {
             Drag::Endpoint { id, end, orig } => {
                 let Some(e) = self.diagram.edge(id) else { return };
                 let other = if end == 0 { e.to } else { e.from };
-                // Pointers may point to their own object; other lines may not.
-                let exclude = if e.pointer.is_some() { None } else { other.node() };
+                // Pointers and relations may be dropped on their own source object: pointers allow
+                // it (self-pointer), relations reject it with an explaining error. Only untyped
+                // connectors skip their own object.
+                let exclude = if e.link().is_some() { None } else { other.node() };
                 let new_end = self.end_at(w, exclude);
                 if let Some(kind) = e.link() {
                     let (from, to) = if end == 0 { (new_end, other) } else { (other, new_end) };
@@ -407,26 +362,6 @@ impl App {
                     }
                 }
             }
-            Drag::Connect { from } => match self.diagram.node_at(w) {
-                Some(to) if to != from => {
-                    let id = self.diagram.add_edge(from, to);
-                    self.select_only(id);
-                }
-                Some(_) => {}
-                None => {
-                    // Dropped on empty canvas: create a copy of the source shape there and connect it.
-                    let Some(src) = self.diagram.node(from).cloned() else { return };
-                    let mut n = src;
-                    n.id = self.diagram.alloc_id();
-                    n.text.clear();
-                    let min = self.snap_pos(w - n.rect().size() / 2.0);
-                    n.pos = [min.x, min.y];
-                    let new_id = n.id;
-                    self.diagram.nodes.push(n);
-                    self.diagram.add_edge(from, new_id);
-                    self.select_only(new_id);
-                }
-            },
             _ => {}
         }
     }
@@ -434,9 +369,11 @@ impl App {
     fn on_click(&mut self, p: Pos2, shift: bool) {
         // Pointer/relation tool + click (no drag): place a default-length horizontal line.
         if let Some(kind) = self.link_tool.take() {
-            if kind == LinkKind::Relation(RelationKind::Implements) {
-                self.status = "Implements: drag from a class to a trait.".into();
-                return;
+            if let LinkKind::Relation(r) = kind {
+                if r.needs_two_objects() {
+                    self.status = format!("{}: drag {}.", r.name(), r.rule().to_lowercase());
+                    return;
+                }
             }
             let w = self.to_world(p);
             let from = self.end_at(w, None);
@@ -444,10 +381,6 @@ impl App {
             let to = End::point(self.snap_pos(start + vec2(120.0, 0.0)));
             let id = self.diagram.add_link(from, to, kind, self.pointer_const);
             self.select_only(id);
-            return;
-        }
-        if let Some((id, dir)) = self.arrow_hit(p) {
-            self.clone_towards(id, dir);
             return;
         }
         let w = self.to_world(p);
@@ -476,28 +409,6 @@ impl App {
         self.select_only(id);
         self.editing = Some(id);
         self.edit_focus = true;
-    }
-
-    /// Clones a shape next to itself in the given arrow direction and connects them.
-    fn clone_towards(&mut self, id: Id, dir: usize) {
-        let Some(src) = self.diagram.node(id).cloned() else { return };
-        let r = src.rect();
-        let gap = 60.0;
-        let off = match dir {
-            0 => vec2(0.0, -(r.height() + gap)),
-            1 => vec2(r.width() + gap, 0.0),
-            2 => vec2(0.0, r.height() + gap),
-            _ => vec2(-(r.width() + gap), 0.0),
-        };
-        let mut n = src;
-        n.id = self.diagram.alloc_id();
-        n.text.clear();
-        n.pos = [r.min.x + off.x, r.min.y + off.y];
-        let new_id = n.id;
-        self.diagram.nodes.push(n);
-        self.diagram.add_edge(id, new_id);
-        self.select_only(new_id);
-        self.hovered = Some(new_id);
     }
 
     pub fn add_node_at(&mut self, kind: ShapeKind, world_center: Pos2) -> Id {
@@ -545,6 +456,9 @@ impl App {
                 let tr = self.rect_to_screen(n.text_rect());
                 paint_text(painter, tr, &n.text, n.font_size * z, color(n.text_color));
             }
+            if n.kind.is_object() {
+                paint_members(painter, n, sr, z, stroke);
+            }
         }
 
         for e in &self.diagram.edges {
@@ -591,19 +505,6 @@ impl App {
             }
         }
 
-        if let (Some(id), Drag::None) = (self.hovered, &self.drag) {
-            if let Some(n) = self.diagram.node(id).filter(|_| self.editing != Some(id)) {
-                let hit = pointer.and_then(|p| self.arrow_hit(p)).map(|(_, i)| i);
-                for (i, (c, dir)) in arrow_positions(self.rect_to_screen(n.rect())).into_iter().enumerate() {
-                    let perp = vec2(-dir.y, dir.x);
-                    let col = if hit == Some(i) { SEL } else { HOVER.gamma_multiply(0.8) };
-                    let tip = c + dir * 7.0;
-                    let base = c - dir * 5.0;
-                    painter.add(Shape::convex_polygon(vec![tip, base + perp * 6.0, base - perp * 6.0], col, Stroke::NONE));
-                }
-            }
-        }
-
         match &self.drag {
             Drag::Endpoint { id, end, .. } => {
                 // Highlight the shape the end would attach to (only where the line is allowed).
@@ -622,19 +523,6 @@ impl App {
                     .and_then(|t| self.diagram.node(t));
                 if let Some(t) = target {
                     painter.rect_stroke(self.rect_to_screen(t.rect()).expand(3.0), 2.0, Stroke::new(2.0, HOVER), StrokeKind::Outside);
-                }
-            }
-            Drag::Connect { from } => {
-                if let (Some(p), Some(src)) = (pointer, self.diagram.node(*from)) {
-                    let w = self.to_world(p);
-                    let target = self.diagram.node_at(w).filter(|t| t != from).and_then(|t| self.diagram.node(t));
-                    let aim = target.map(|t| t.rect().center()).unwrap_or(w);
-                    let start = self.to_screen(src.boundary_point(aim));
-                    let end = target.map(|t| self.to_screen(t.boundary_point(src.rect().center()))).unwrap_or(p);
-                    if let Some(t) = target {
-                        painter.rect_stroke(self.rect_to_screen(t.rect()).expand(3.0), 2.0, Stroke::new(2.0, HOVER), StrokeKind::Outside);
-                    }
-                    painter.extend(Shape::dashed_line(&[start, end], Stroke::new(1.5, SEL), 6.0, 4.0));
                 }
             }
             Drag::Rubber { start } => {

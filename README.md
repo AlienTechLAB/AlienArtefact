@@ -7,7 +7,6 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 - Objects: class/struct, and trait/interface (Rust trait, C# interface, C++ pure virtual class) shown with a `«trait»` stereotype above the name. Names are edited in the right panel or by double-clicking
 - Shapes: rectangle, rounded rectangle, ellipse, diamond, triangle, hexagon, parallelogram, cylinder, text
 - Select (click, Shift+click, rubber band), move with grid snapping, resize via handles
-- Connectors: hover a shape and drag a blue arrow onto another shape (or onto empty canvas to create a connected copy); click an arrow to clone the shape in that direction
 - Pointers (palette section): drag from the owner to the pointed-to object. Each kind has a fixed look:
 
   | Pointer | Line | Owner end | Target end | Badge |
@@ -18,10 +17,12 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
   | `shared_ptr` | solid | hollow diamond | filled arrow | `shared_ptr` |
   | `weak_ptr` | dotted | hollow diamond | open arrow | `weak_ptr` |
 
-  A const target shows in the badge (`const *`, `unique_ptr<const>`). The label (member name) sits near the target. Ends dropped on a shape attach to it; drag a selected pointer's end handles to re-attach. Release on the owner itself for a self-pointer (drawn as a loop off its right side). Every pointer has one of the five kinds; plain connectors (blue hover arrows) keep free pattern/arrowhead choice
+  A const target shows in the badge (`const *`, `unique_ptr<const>`). The label (member name) sits near the target. Ends dropped on a shape attach to it; drag a selected pointer's end handles to re-attach. Release on the owner itself for a self-pointer (drawn as a loop off its right side). Every pointer has one of the five kinds
 - Relations (palette section):
   - Related: dotted line, no arrowheads. A loose, non-technical link (e.g. a config file and the struct loaded from it)
-  - Implements: dashed line with a hollow triangle at the trait. Only from a class to a trait; invalid drops are rejected
+  - Implements: dashed line with a hollow triangle at the trait. Only from a class to a trait
+  - Inheritance: solid line with a hollow triangle at the base. From the derived class to its base class, or from a trait to the trait it extends
+  - Drawing a relation between the wrong objects shows an error window explaining why; OK removes it
 - Routing: orthogonal or straight
 - Format panel: fill/line/font colors, line width, font size, position and size
 - Undo/redo, cut/copy/paste, duplicate, delete, bring to front / send to back
@@ -33,7 +34,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 | Action | Input |
 | --- | --- |
 | Add shape | Click or drag from the Shapes panel |
-| Edit text | Double-click a shape or connector, or F2 |
+| Edit name / label | Double-click an object or line, or F2 |
 | Add text | Double-click empty canvas |
 | Zoom | Ctrl + mouse wheel |
 | Scroll | Mouse wheel (Shift for horizontal) |
