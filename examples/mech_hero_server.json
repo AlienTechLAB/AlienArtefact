@@ -1,0 +1,3781 @@
+{
+ "nodes": [
+  {
+   "id": 1,
+   "kind": "File",
+   "pos": [
+    0.0,
+    90.0
+   ],
+   "size": [
+    167,
+    60.0
+   ],
+   "text": "server_config.toml",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 2,
+   "kind": "Class",
+   "pos": [
+    340.0,
+    50.0
+   ],
+   "size": [
+    385,
+    258
+   ],
+   "text": "ServerConfig",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "ip",
+     "ty": "String",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "port",
+     "ty": "u16",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "server_name",
+     "ty": "String",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "web_root",
+     "ty": "PathBuf",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "game_config",
+     "ty": "PathBuf",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "database",
+     "ty": "PathBuf",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "world_tick",
+     "ty": "bool",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "backup_directory",
+     "ty": "PathBuf",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "backup_hours",
+     "ty": "u64",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "backup_keep",
+     "ty": "usize",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "load_file",
+     "ty": "Result<ServerConfig, String>",
+     "params": "path: &Path",
+     "is_static": true,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 3,
+   "kind": "Directory",
+   "pos": [
+    0.0,
+    210.0
+   ],
+   "size": [
+    150.0,
+    60.0
+   ],
+   "text": "wwwroot/",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 4,
+   "kind": "File",
+   "pos": [
+    0.0,
+    398.0
+   ],
+   "size": [
+    154,
+    60.0
+   ],
+   "text": "game_config.toml",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 5,
+   "kind": "Class",
+   "pos": [
+    340.0,
+    378.0
+   ],
+   "size": [
+    372,
+    84
+   ],
+   "text": "GameConfig",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "load_file",
+     "ty": "Result<GameConfig, String>",
+     "params": "path: &Path",
+     "is_static": true,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 6,
+   "kind": "Class",
+   "pos": [
+    815.0,
+    50.0
+   ],
+   "size": [
+    170.0,
+    102
+   ],
+   "text": "AppState",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "settings",
+     "ty": "Settings",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "cookie_name",
+     "ty": "String",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 7,
+   "kind": "Class",
+   "pos": [
+    815.0,
+    222.0
+   ],
+   "size": [
+    216,
+    171
+   ],
+   "text": "Ctx",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "started",
+     "ty": "Instant",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "query",
+     "ty": "String",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "language_id",
+     "ty": "i32",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "literals",
+     "ty": "Literals",
+     "params": "",
+     "is_static": false,
+     "is_async": true,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "started_ms",
+     "ty": "u128",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "clock",
+     "ty": "ClientTime",
+     "params": "",
+     "is_static": false,
+     "is_async": true,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "PerRequest",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 8,
+   "kind": "Class",
+   "pos": [
+    815.0,
+    463.0
+   ],
+   "size": [
+    177,
+    171
+   ],
+   "text": "GameApi",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "session_token",
+     "ty": "i64",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "is_signed_in",
+     "ty": "bool",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "player_id",
+     "ty": "i32",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "city_id",
+     "ty": "i32",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "is_in_game",
+     "ty": "bool",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "sign_out",
+     "ty": "",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "PerRequest",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 9,
+   "kind": "Class",
+   "pos": [
+    815.0,
+    704.0
+   ],
+   "size": [
+    170.0,
+    84
+   ],
+   "text": "Session",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "id",
+     "ty": "String",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "PerSession",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 10,
+   "kind": "Class",
+   "pos": [
+    815.0,
+    858.0
+   ],
+   "size": [
+    248,
+    102
+   ],
+   "text": "State",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "values",
+     "ty": "HashMap<String, String>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "touched",
+     "ty": "Option<Instant>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "PerSession",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 11,
+   "kind": "Class",
+   "pos": [
+    1153.0,
+    50.0
+   ],
+   "size": [
+    170.0,
+    71
+   ],
+   "text": "ConnectionStore",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 12,
+   "kind": "Class",
+   "pos": [
+    1153.0,
+    191.0
+   ],
+   "size": [
+    314,
+    84
+   ],
+   "text": "Client",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "new",
+     "ty": "Client",
+     "params": "handler: Arc<RequestHandler>",
+     "is_static": true,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 13,
+   "kind": "Class",
+   "pos": [
+    1153.0,
+    345.0
+   ],
+   "size": [
+    346,
+    119
+   ],
+   "text": "ReferenceStore",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "data",
+     "ty": "Mutex<Option<Arc<ReferenceData>>>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "lookups",
+     "ty": "Mutex<Option<Arc<ReferenceDataInfo>>>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "literals",
+     "ty": "Literals",
+     "params": "language_id: i32",
+     "is_static": false,
+     "is_async": true,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 14,
+   "kind": "Class",
+   "pos": [
+    1153.0,
+    534.0
+   ],
+   "size": [
+    314,
+    102
+   ],
+   "text": "ClickGuard",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "sessions",
+     "ty": "Mutex<HashMap<String, Element>>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "locked_ips",
+     "ty": "Mutex<HashSet<String>>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 15,
+   "kind": "Class",
+   "pos": [
+    1153.0,
+    706.0
+   ],
+   "size": [
+    184,
+    136
+   ],
+   "text": "CodeImage",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "alphabet",
+     "ty": "Vec<char>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "background",
+     "ty": "PathBuf",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "font",
+     "ty": "Option<FontVec>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "random",
+     "ty": "Mutex<StdRng>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 16,
+   "kind": "Class",
+   "pos": [
+    1153.0,
+    912.0
+   ],
+   "size": [
+    190,
+    84
+   ],
+   "text": "SessionStore",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "idle_timeout",
+     "ty": "Duration",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 17,
+   "kind": "Dictionary",
+   "pos": [
+    1153.0,
+    1066.0
+   ],
+   "size": [
+    150.0,
+    64.0
+   ],
+   "text": "",
+   "fill": [
+    225,
+    236,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "String",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 18,
+   "kind": "Class",
+   "pos": [
+    1739.0,
+    50.0
+   ],
+   "size": [
+    300,
+    102
+   ],
+   "text": "RequestHandler",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "on_request",
+     "ty": "Reply",
+     "params": "payload: &[u8]",
+     "is_static": false,
+     "is_async": true,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "sessions",
+     "ty": "&SessionManager",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 19,
+   "kind": "Enum",
+   "pos": [
+    1739.0,
+    222.0
+   ],
+   "size": [
+    352,
+    119
+   ],
+   "text": "Request",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Variant",
+     "visibility": "Public",
+     "name": "Login",
+     "ty": "LoginRequest",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 150
+    },
+    {
+     "kind": "Method",
+     "visibility": "Private",
+     "name": "parse",
+     "ty": "Option<Request>",
+     "params": "name: &str, body: Value",
+     "is_static": true,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Private",
+     "name": "self_test",
+     "ty": "bool",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 20,
+   "kind": "Class",
+   "pos": [
+    1739.0,
+    411.0
+   ],
+   "size": [
+    170.0,
+    71
+   ],
+   "text": "AccountHandler",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 21,
+   "kind": "Class",
+   "pos": [
+    1739.0,
+    552.0
+   ],
+   "size": [
+    268,
+    119
+   ],
+   "text": "GameHandler",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "required_store",
+     "ty": "&Store",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "reference",
+     "ty": "&Reference",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "reference_handle",
+     "ty": "Arc<Reference>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 22,
+   "kind": "Class",
+   "pos": [
+    1739.0,
+    741.0
+   ],
+   "size": [
+    170.0,
+    71
+   ],
+   "text": "MapCache",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 23,
+   "kind": "Class",
+   "pos": [
+    1739.0,
+    882.0
+   ],
+   "size": [
+    210,
+    119
+   ],
+   "text": "WorldTick",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "export",
+     "ty": "String",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "stopping",
+     "ty": "Arc<AtomicBool>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "start",
+     "ty": "Result<()>",
+     "params": "",
+     "is_static": false,
+     "is_async": true,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": "every 1 s",
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 24,
+   "kind": "Class",
+   "pos": [
+    2181.0,
+    50.0
+   ],
+   "size": [
+    170.0,
+    71
+   ],
+   "text": "SessionManager",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 25,
+   "kind": "Class",
+   "pos": [
+    2181.0,
+    191.0
+   ],
+   "size": [
+    262,
+    67
+   ],
+   "text": "State",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "by_nickname",
+     "ty": "HashMap<String, i64>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 26,
+   "kind": "Dictionary",
+   "pos": [
+    2181.0,
+    328.0
+   ],
+   "size": [
+    150.0,
+    64.0
+   ],
+   "text": "",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "i64",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 27,
+   "kind": "Class",
+   "pos": [
+    2181.0,
+    462.0
+   ],
+   "size": [
+    326,
+    223
+   ],
+   "text": "Session",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "nickname",
+     "ty": "String",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "player_id",
+     "ty": "i32",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "sitter_player_id",
+     "ty": "i32",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "city_id",
+     "ty": "i32",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "token",
+     "ty": "i64",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "last_access_time",
+     "ty": "OffsetDateTime",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "suspension_deadline",
+     "ty": "Option<OffsetDateTime>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "suspension_reason",
+     "ty": "Option<String>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "user_privileges",
+     "ty": "Privileges",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "PerSession",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 28,
+   "kind": "Class",
+   "pos": [
+    2597.0,
+    50.0
+   ],
+   "size": [
+    294,
+    102
+   ],
+   "text": "Database",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "name",
+     "ty": "&'static str",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "detached",
+     "ty": "Database",
+     "params": "name: &'static str",
+     "is_static": true,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "required_store",
+     "ty": "&Store",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 29,
+   "kind": "Class",
+   "pos": [
+    2597.0,
+    222.0
+   ],
+   "size": [
+    294,
+    136
+   ],
+   "text": "Reference",
+   "fill": [
+    226,
+    242,
+    226,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "data",
+     "ty": "ReferenceData",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "config",
+     "ty": "HashMap<String, ConfigElement>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "action_types",
+     "ty": "HashMap<i32, String>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "messages",
+     "ty": "HashMap<i32, String>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 30,
+   "kind": "Enum",
+   "pos": [
+    1819.0,
+    1231.0
+   ],
+   "size": [
+    170.0,
+    136
+   ],
+   "text": "Privileges",
+   "fill": [
+    240,
+    230,
+    250,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Variant",
+     "visibility": "Public",
+     "name": "Everybody",
+     "ty": "",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Variant",
+     "visibility": "Public",
+     "name": "User",
+     "ty": "",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Variant",
+     "visibility": "Public",
+     "name": "Admin",
+     "ty": "",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "is_admin",
+     "ty": "bool",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 31,
+   "kind": "Class",
+   "pos": [
+    3131.0,
+    50.0
+   ],
+   "size": [
+    281,
+    119
+   ],
+   "text": "Store",
+   "fill": [
+    252,
+    244,
+    220,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "guard",
+     "ty": "File",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "open",
+     "ty": "Result<Store>",
+     "params": "directory: &str",
+     "is_static": true,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "set_engine",
+     "ty": "",
+     "params": "engine: Arc<GameEngine>",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 32,
+   "kind": "File",
+   "pos": [
+    4385.0,
+    50.0
+   ],
+   "size": [
+    174,
+    60.0
+   ],
+   "text": "<store>/server.lock",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 33,
+   "kind": "Class",
+   "pos": [
+    3131.0,
+    239.0
+   ],
+   "size": [
+    378,
+    136
+   ],
+   "text": "GameDatabase",
+   "fill": [
+    252,
+    244,
+    220,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "directory",
+     "ty": "PathBuf",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "in_transaction",
+     "ty": "bool",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "doomed_blobs",
+     "ty": "Vec<i32>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "new",
+     "ty": "GameDatabase<S>",
+     "params": "directory: PathBuf, tables: S",
+     "is_static": true,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "S: Schema",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 34,
+   "kind": "File",
+   "pos": [
+    4385.0,
+    239.0
+   ],
+   "size": [
+    174,
+    60.0
+   ],
+   "text": "<store>/journal.dat",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 35,
+   "kind": "Class",
+   "pos": [
+    3131.0,
+    445.0
+   ],
+   "size": [
+    170.0,
+    102
+   ],
+   "text": "BlobStore",
+   "fill": [
+    252,
+    244,
+    220,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "directory",
+     "ty": "PathBuf",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "next",
+     "ty": "Option<i32>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 36,
+   "kind": "File",
+   "pos": [
+    4385.0,
+    445.0
+   ],
+   "size": [
+    180,
+    60.0
+   ],
+   "text": "<store>/<n>/<id>.dat",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 37,
+   "kind": "Class",
+   "pos": [
+    3599.0,
+    50.0
+   ],
+   "size": [
+    262,
+    84
+   ],
+   "text": "Tables",
+   "fill": [
+    252,
+    244,
+    220,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Public",
+     "name": "Accounts",
+     "ty": "Table<AccountsRow>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 74
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": true,
+   "flags": false
+  },
+  {
+   "id": 38,
+   "kind": "Trait",
+   "pos": [
+    3599.0,
+    204.0
+   ],
+   "size": [
+    294,
+    73
+   ],
+   "text": "Schema",
+   "fill": [
+    252,
+    244,
+    220,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "all",
+     "ty": "Vec<&mut dyn TableOps>",
+     "params": "&mut self",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 39,
+   "kind": "Class",
+   "pos": [
+    3599.0,
+    347.0
+   ],
+   "size": [
+    229,
+    119
+   ],
+   "text": "GameEngine",
+   "fill": [
+    252,
+    244,
+    220,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "texts",
+     "ty": "HashMap<i32, String>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "empty",
+     "ty": "GameEngine",
+     "params": "",
+     "is_static": true,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Method",
+     "visibility": "Public",
+     "name": "counts",
+     "ty": "Vec<(&str, usize)>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "",
+   "scope": "Singleton",
+   "task": null,
+   "generated": true,
+   "flags": false
+  },
+  {
+   "id": 40,
+   "kind": "Class",
+   "pos": [
+    3983.0,
+    50.0
+   ],
+   "size": [
+    222,
+    154
+   ],
+   "text": "Table",
+   "fill": [
+    252,
+    244,
+    220,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "rows",
+     "ty": "Vec<R>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "indexes",
+     "ty": "Vec<TableIndex<R>>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "path",
+     "ty": "Option<PathBuf>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "identity",
+     "ty": "i64",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "pending",
+     "ty": "Vec<Entry>",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    },
+    {
+     "kind": "Field",
+     "visibility": "Private",
+     "name": "in_transaction",
+     "ty": "bool",
+     "params": "",
+     "is_static": false,
+     "is_async": false,
+     "repeat": 0
+    }
+   ],
+   "key": "",
+   "type_params": "R: Row",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 41,
+   "kind": "Trait",
+   "pos": [
+    3983.0,
+    274.0
+   ],
+   "size": [
+    170.0,
+    71
+   ],
+   "text": "TableOps",
+   "fill": [
+    252,
+    244,
+    220,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 42,
+   "kind": "Trait",
+   "pos": [
+    3983.0,
+    415.0
+   ],
+   "size": [
+    170.0,
+    71
+   ],
+   "text": "Row",
+   "fill": [
+    252,
+    244,
+    220,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 43,
+   "kind": "File",
+   "pos": [
+    4385.0,
+    170.0
+   ],
+   "size": [
+    174,
+    60.0
+   ],
+   "text": "<store>/<Table>.tbl",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 44,
+   "kind": "External",
+   "pos": [
+    1779.0,
+    1487.0
+   ],
+   "size": [
+    170.0,
+    60.0
+   ],
+   "text": "tokio::sync::Notify",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 45,
+   "kind": "Package",
+   "pos": [
+    300.0,
+    0.0
+   ],
+   "size": [
+    1239.0,
+    1170.0
+   ],
+   "text": "web",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 46,
+   "kind": "Package",
+   "pos": [
+    1699.0,
+    0.0
+   ],
+   "size": [
+    1232.0,
+    1041.0
+   ],
+   "text": "serverapi",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 47,
+   "kind": "Package",
+   "pos": [
+    1779.0,
+    1181.0
+   ],
+   "size": [
+    250.0,
+    226.0
+   ],
+   "text": "libmechhero",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  },
+  {
+   "id": 48,
+   "kind": "Package",
+   "pos": [
+    3091.0,
+    0.0
+   ],
+   "size": [
+    1154.0,
+    587.0
+   ],
+   "text": "store",
+   "fill": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "stroke": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "stroke_width": 1.0,
+   "text_color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "font_size": 12.0,
+   "members": [],
+   "key": "",
+   "type_params": "",
+   "scope": "Many",
+   "task": null,
+   "generated": false,
+   "flags": false
+  }
+ ],
+ "edges": [
+  {
+   "id": 49,
+   "from": 1,
+   "to": 2,
+   "label": "loaded into",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Related",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 50,
+   "from": 2,
+   "to": 3,
+   "label": "web_root: static files",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Related",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 51,
+   "from": 4,
+   "to": 5,
+   "label": "loaded into",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Related",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 52,
+   "from": 5,
+   "to": 39,
+   "label": "engine",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 53,
+   "from": 6,
+   "to": 11,
+   "label": "connections",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 54,
+   "from": 6,
+   "to": 13,
+   "label": "reference",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 55,
+   "from": 6,
+   "to": 16,
+   "label": "sessions",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 56,
+   "from": 6,
+   "to": 14,
+   "label": "guard",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 57,
+   "from": 6,
+   "to": 15,
+   "label": "code_images",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 58,
+   "from": 7,
+   "to": 6,
+   "label": "state",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 59,
+   "from": 7,
+   "to": 9,
+   "label": "session",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 60,
+   "from": 7,
+   "to": 8,
+   "label": "api",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 61,
+   "from": 8,
+   "to": 11,
+   "label": "connections",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 62,
+   "from": 8,
+   "to": 9,
+   "label": "session",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 63,
+   "from": 9,
+   "to": 10,
+   "label": "state",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "Mutex",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 64,
+   "from": 16,
+   "to": 17,
+   "label": "sessions",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "Mutex",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 65,
+   "from": 17,
+   "to": 10,
+   "label": "",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "Mutex",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 66,
+   "from": 13,
+   "to": 11,
+   "label": "connections",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 67,
+   "from": 11,
+   "to": 12,
+   "label": "client",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 68,
+   "from": 12,
+   "to": 18,
+   "label": "handler",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 69,
+   "from": 18,
+   "to": 20,
+   "label": "accounts",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 70,
+   "from": 18,
+   "to": 21,
+   "label": "game",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 71,
+   "from": 18,
+   "to": 24,
+   "label": "sessions",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 72,
+   "from": 18,
+   "to": 22,
+   "label": "map",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 73,
+   "from": 18,
+   "to": 19,
+   "label": "parse, self_test",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Uses",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 74,
+   "from": 19,
+   "to": 30,
+   "label": "privilege level",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Uses",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 75,
+   "from": 20,
+   "to": 28,
+   "label": "accounts",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 76,
+   "from": 20,
+   "to": 28,
+   "label": "game",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 77,
+   "from": 21,
+   "to": 28,
+   "label": "game",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 78,
+   "from": 21,
+   "to": 29,
+   "label": "reference",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 79,
+   "from": 22,
+   "to": 28,
+   "label": "game",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 80,
+   "from": 23,
+   "to": 28,
+   "label": "game",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 81,
+   "from": 23,
+   "to": 29,
+   "label": "reference",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 82,
+   "from": 23,
+   "to": 44,
+   "label": "stop",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 83,
+   "from": 24,
+   "to": 25,
+   "label": "state",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "Mutex",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 84,
+   "from": 25,
+   "to": 26,
+   "label": "by_token",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 85,
+   "from": 26,
+   "to": 27,
+   "label": "",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 86,
+   "from": 28,
+   "to": 31,
+   "label": "store",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": false,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 87,
+   "from": 31,
+   "to": 33,
+   "label": "db",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "Mutex",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 88,
+   "from": 31,
+   "to": 32,
+   "label": "holds open",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Related",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 89,
+   "from": 33,
+   "to": 35,
+   "label": "blobs",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 90,
+   "from": 33,
+   "to": 37,
+   "label": "tables",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Unique",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 91,
+   "from": 33,
+   "to": 34,
+   "label": "replays, appends",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Related",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 92,
+   "from": 35,
+   "to": 36,
+   "label": "reads, writes",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Related",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 93,
+   "from": 40,
+   "to": 43,
+   "label": "loads, saves",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Related",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 94,
+   "from": 37,
+   "to": 39,
+   "label": "engine",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "pointer": "Shared",
+   "const_target": false,
+   "lock": "None",
+   "required": true,
+   "style": "Orthogonal"
+  },
+  {
+   "id": 95,
+   "from": 37,
+   "to": 38,
+   "label": "",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Implements",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 96,
+   "from": 40,
+   "to": 41,
+   "label": "",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Implements",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 97,
+   "from": 45,
+   "to": 46,
+   "label": "",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Uses",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 98,
+   "from": 45,
+   "to": 47,
+   "label": "",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Uses",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 99,
+   "from": 46,
+   "to": 48,
+   "label": "",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Uses",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 100,
+   "from": 46,
+   "to": 47,
+   "label": "",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Uses",
+   "style": "Orthogonal"
+  },
+  {
+   "id": 101,
+   "from": 48,
+   "to": 47,
+   "label": "",
+   "color": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 1.0,
+   "relation": "Uses",
+   "style": "Orthogonal"
+  }
+ ],
+ "next_id": 101
+}

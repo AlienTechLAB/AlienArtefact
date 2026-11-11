@@ -7,6 +7,10 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 - Objects: class/struct, and trait/interface (Rust trait, C# interface, C++ pure virtual class) shown with a `«trait»` stereotype above the name. Names are edited in the right panel or by double-clicking
 - File object: a document shape (folded corner) for config/data/asset/log files; connected to types with Related only (no pointers, no members)
 - Collections: set, vector, dictionary, tree, queue (stacked-cards shape with a «kind» stereotype). The element type comes from the collection's one outgoing pointer, or from text for outside types; dictionaries also have a key type
+- Enums (variants, flags), external types, packages (frames for crates/modules) and directories
+- Object properties: type parameters, scope (singleton / per request / per session), task (with period), generated; members can be async, repeated (×N), internal (~)
+- Uses relation (calls / package dependencies); pointer lock (mutex / rwlock) and never-null [1]
+- Validate: checks the whole diagram against the language rules (Diagram > Validate, or `architect_ai --validate file.json`)
 - Shapes: rectangle, rounded rectangle, ellipse, diamond, triangle, hexagon, parallelogram, cylinder, text
 - Select (click, Shift+click, rubber band), move with grid snapping, resize via handles
 - Pointers (palette section): drag from the owner to the pointed-to object. Each kind has a fixed look:

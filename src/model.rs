@@ -49,6 +49,72 @@ pub enum ShapeKind {
     Tree,
     /// First in, first out.
     Queue,
+    /// Enumeration: a closed set of variants (Rust enums may carry data per variant).
+    Enum,
+    /// A type from outside the program (a library), e.g. `tokio::sync::Notify`.
+    External,
+    /// A crate, module or namespace: a frame that contains objects.
+    Package,
+    /// A directory of files outside the program's memory.
+    Directory,
+}
+
+/// Process lifetime of a type's values, shown in the header.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Scope {
+    /// Any number of values (the default; not shown).
+    #[default]
+    Many,
+    /// Exactly one per process.
+    Singleton,
+    /// One per handled request.
+    PerRequest,
+    /// One per user session.
+    PerSession,
+}
+
+impl Scope {
+    pub const ALL: [Scope; 4] = [Scope::Many, Scope::Singleton, Scope::PerRequest, Scope::PerSession];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Scope::Many => "many",
+            Scope::Singleton => "singleton",
+            Scope::PerRequest => "per request",
+            Scope::PerSession => "per session",
+        }
+    }
+}
+
+/// Lock guarding what a pointer reaches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Lock {
+    #[default]
+    None,
+    Mutex,
+    RwLock,
+}
+
+impl Lock {
+    pub const ALL: [Lock; 3] = [Lock::None, Lock::Mutex, Lock::RwLock];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Lock::None => "none",
+            Lock::Mutex => "mutex",
+            Lock::RwLock => "rwlock",
+        }
+    }
+}
+
+/// Height of a package frame's name tab.
+pub fn package_tab_height(font_size: f32, box_height: f32) -> f32 {
+    (font_size * 1.9).min(box_height)
+}
+
+/// Width of a package frame's name tab, estimated from the name length.
+pub fn package_tab_width(name: &str, font_size: f32, box_width: f32) -> f32 {
+    (name.chars().count() as f32 * font_size * 0.62 + font_size * 1.6).max(font_size * 6.0).min(box_width)
 }
 
 /// Offset between the two "stacked cards" of a collection shape (world units).
@@ -63,8 +129,8 @@ pub fn file_fold(w: f32, h: f32) -> f32 {
 
 /// Height of an object's header compartment (stereotype + name), for a given font size
 /// (same units as `font_size`).
-pub fn header_height(kind: ShapeKind, font_size: f32, box_height: f32) -> f32 {
-    let lines = if kind.stereotype().is_some() { 3.6 } else { 2.2 };
+pub fn header_height(has_stereotype: bool, font_size: f32, box_height: f32) -> f32 {
+    let lines = if has_stereotype { 3.6 } else { 2.2 };
     (font_size * lines).min(box_height)
 }
 
@@ -76,7 +142,15 @@ pub fn stereotype_height(font_size: f32, box_height: f32) -> f32 {
 impl ShapeKind {
     /// Shapes offered in the "Objects" palette section. The other kinds can no longer be
     /// created, but stay so diagrams that contain them still open and draw.
-    pub const OBJECTS: [ShapeKind; 3] = [ShapeKind::Class, ShapeKind::Trait, ShapeKind::File];
+    pub const OBJECTS: [ShapeKind; 7] = [
+        ShapeKind::Class,
+        ShapeKind::Trait,
+        ShapeKind::Enum,
+        ShapeKind::External,
+        ShapeKind::Package,
+        ShapeKind::File,
+        ShapeKind::Directory,
+    ];
 
     /// Shapes offered in the "Collections" palette section.
     pub const COLLECTIONS: [ShapeKind; 5] =
@@ -88,12 +162,23 @@ impl ShapeKind {
 
     /// Class-like objects (types): a header with the name, members below.
     pub fn is_object(self) -> bool {
-        matches!(self, ShapeKind::Class | ShapeKind::Trait)
+        matches!(self, ShapeKind::Class | ShapeKind::Trait | ShapeKind::Enum)
     }
 
-    /// Language elements with a one-line name edited in the right panel (types and files).
+    /// Language elements with a one-line name edited in the right panel.
     pub fn is_named(self) -> bool {
-        self.is_object() || self == ShapeKind::File
+        self.is_object()
+            || matches!(self, ShapeKind::File | ShapeKind::Directory | ShapeKind::External | ShapeKind::Package)
+    }
+
+    /// Files and directories: things outside the program's memory.
+    pub fn is_storage(self) -> bool {
+        matches!(self, ShapeKind::File | ShapeKind::Directory)
+    }
+
+    /// Kinds that belong to the language (the rest are legacy drawing shapes).
+    pub fn is_language(self) -> bool {
+        self.is_named() || self.is_collection()
     }
 
     /// UML stereotype shown above the name, e.g. `«trait»`.
@@ -105,6 +190,8 @@ impl ShapeKind {
             ShapeKind::Dictionary => Some("\u{ab}dictionary\u{bb}"),
             ShapeKind::Tree => Some("\u{ab}tree\u{bb}"),
             ShapeKind::Queue => Some("\u{ab}queue\u{bb}"),
+            ShapeKind::Enum => Some("\u{ab}enum\u{bb}"),
+            ShapeKind::External => Some("\u{ab}external\u{bb}"),
             _ => None,
         }
     }
@@ -128,6 +215,10 @@ impl ShapeKind {
             ShapeKind::Dictionary => "Dictionary",
             ShapeKind::Tree => "Tree",
             ShapeKind::Queue => "Queue",
+            ShapeKind::Enum => "Enum",
+            ShapeKind::External => "External type",
+            ShapeKind::Package => "Package",
+            ShapeKind::Directory => "Directory",
         }
     }
 
@@ -141,6 +232,10 @@ impl ShapeKind {
             ShapeKind::Text => vec2(80.0, 30.0),
             ShapeKind::Class | ShapeKind::Trait => vec2(160.0, 100.0),
             ShapeKind::File => vec2(140.0, 70.0),
+            ShapeKind::Enum => vec2(160.0, 100.0),
+            ShapeKind::External => vec2(170.0, 64.0),
+            ShapeKind::Package => vec2(420.0, 300.0),
+            ShapeKind::Directory => vec2(150.0, 70.0),
             ShapeKind::Set | ShapeKind::Vector | ShapeKind::Dictionary | ShapeKind::Tree | ShapeKind::Queue => {
                 vec2(140.0, 64.0)
             }
@@ -167,12 +262,30 @@ pub struct Node {
     /// Key type of a dictionary collection.
     #[serde(default)]
     pub key: String,
+    /// Generic type parameters of a class, trait or enum, e.g. `R: Row`.
+    #[serde(default)]
+    pub type_params: String,
+    /// How many values of this type a process has.
+    #[serde(default)]
+    pub scope: Scope,
+    /// `Some(period)` marks an active object (a task that runs on its own); the period may be
+    /// empty, e.g. `every 1 s`.
+    #[serde(default)]
+    pub task: Option<String>,
+    /// Source produced by a tool, not written by hand.
+    #[serde(default)]
+    pub generated: bool,
+    /// For an enum: the variants are bit flags that combine.
+    #[serde(default)]
+    pub flags: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemberKind {
     Field,
     Method,
+    /// A variant of an enum; `ty` holds its data, if any.
+    Variant,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,10 +293,13 @@ pub enum Visibility {
     Public,
     Protected,
     Private,
+    /// Visible within the package (Rust `pub(crate)`, C# `internal`).
+    Internal,
 }
 
 impl Visibility {
-    pub const ALL: [Visibility; 3] = [Visibility::Public, Visibility::Protected, Visibility::Private];
+    pub const ALL: [Visibility; 4] =
+        [Visibility::Public, Visibility::Internal, Visibility::Protected, Visibility::Private];
 
     /// UML visibility marker.
     pub fn symbol(self) -> &'static str {
@@ -191,6 +307,7 @@ impl Visibility {
             Visibility::Public => "+",
             Visibility::Protected => "#",
             Visibility::Private => "-",
+            Visibility::Internal => "~",
         }
     }
 
@@ -199,6 +316,7 @@ impl Visibility {
             Visibility::Public => "public",
             Visibility::Protected => "protected",
             Visibility::Private => "private",
+            Visibility::Internal => "internal",
         }
     }
 }
@@ -218,6 +336,13 @@ pub struct Member {
     /// Belongs to the type rather than to each value (UML: underlined).
     #[serde(default)]
     pub is_static: bool,
+    /// A method that runs asynchronously (Rust/C# `async`).
+    #[serde(default)]
+    pub is_async: bool,
+    /// This line stands for this many members of the same shape (0 or 1 = just this one), e.g.
+    /// 74 generated table fields.
+    #[serde(default)]
+    pub repeat: u32,
 }
 
 impl Member {
@@ -228,14 +353,36 @@ impl Member {
         let (name, visibility) = match kind {
             MemberKind::Field => (format!("field{n}"), Visibility::Private),
             MemberKind::Method => (format!("method{n}"), Visibility::Public),
+            MemberKind::Variant => (format!("Variant{n}"), Visibility::Public),
         };
         let visibility = if owner == ShapeKind::Trait { Visibility::Public } else { visibility };
-        Self { kind, visibility, name, ty: String::new(), params: String::new(), is_static: false }
+        Self {
+            kind,
+            visibility,
+            name,
+            ty: String::new(),
+            params: String::new(),
+            is_static: false,
+            is_async: false,
+            repeat: 0,
+        }
     }
 
-    /// UML text, e.g. `- count: int` or `+ draw(ctx: Context): bool`.
+    /// UML text, e.g. `- count: int`, `+ async draw(ctx: Context): bool`, `Login(LoginRequest)`.
     pub fn text(&self) -> String {
-        let mut s = format!("{} {}", self.visibility.symbol(), self.name);
+        if self.kind == MemberKind::Variant {
+            let data = self.ty.trim();
+            let mut v = if data.is_empty() { self.name.clone() } else { format!("{}({data})", self.name) };
+            if self.repeat > 1 {
+                v.push_str(&format!("  \u{d7}{}", self.repeat));
+            }
+            return v;
+        }
+        let mut s = format!("{} ", self.visibility.symbol());
+        if self.is_async && self.kind == MemberKind::Method {
+            s.push_str("async ");
+        }
+        s.push_str(&self.name);
         if self.kind == MemberKind::Method {
             s.push('(');
             s.push_str(&self.params);
@@ -244,6 +391,9 @@ impl Member {
         if !self.ty.trim().is_empty() {
             s.push_str(": ");
             s.push_str(self.ty.trim());
+        }
+        if self.repeat > 1 {
+            s.push_str(&format!("  \u{d7}{}", self.repeat));
         }
         s
     }
@@ -268,10 +418,13 @@ impl Node {
         let f = self.font_size;
         let line = f * 1.45;
         let pad = f * 0.45;
-        let mut y = header_height(self.kind, f, f32::INFINITY);
+        let header = header_height(self.stereotype_text().is_some(), f, f32::INFINITY);
+        let mut y = header;
         let mut lines = Vec::new();
         let mut separators = Vec::new();
-        let fields: Vec<&Member> = self.members.iter().filter(|m| m.kind == MemberKind::Field).collect();
+        // First compartment: fields of a class, variants of an enum.
+        let first_kind = if self.kind == ShapeKind::Enum { MemberKind::Variant } else { MemberKind::Field };
+        let fields: Vec<&Member> = self.members.iter().filter(|m| m.kind == first_kind).collect();
         let methods: Vec<&Member> = self.members.iter().filter(|m| m.kind == MemberKind::Method).collect();
         let place = |list: &[&'a Member], y: &mut f32, lines: &mut Vec<(&'a Member, f32)>| {
             *y += pad;
@@ -281,7 +434,7 @@ impl Node {
             }
             *y += pad;
         };
-        if self.kind == ShapeKind::Class && !self.members.is_empty() {
+        if matches!(self.kind, ShapeKind::Class | ShapeKind::Enum) && !self.members.is_empty() {
             place(&fields, &mut y, &mut lines);
             separators.push(y);
             place(&methods, &mut y, &mut lines);
@@ -289,7 +442,6 @@ impl Node {
             place(&methods, &mut y, &mut lines);
         }
         // Keep at least a little body below the header, like an empty class.
-        let header = header_height(self.kind, f, f32::INFINITY);
         let height = y.max(header + line * 1.5);
         BodyLayout { lines, separators, height, pad }
     }
@@ -298,7 +450,9 @@ impl Node {
     /// (`measure(text)` = width in world units at this object's font size).
     pub fn required_size(&self, measure: impl Fn(&str) -> f32) -> Vec2 {
         let layout = self.body_layout();
-        let name_w = measure(&self.text) + layout.pad * 4.0;
+        let name_w = measure(&self.title()) + layout.pad * 4.0;
+        let stereo_w = self.stereotype_text().map_or(0.0, |s| measure(&s) * 0.85 + layout.pad * 4.0);
+        let name_w = name_w.max(stereo_w);
         let members_w = self
             .members
             .iter()
@@ -321,17 +475,80 @@ impl Node {
                 ShapeKind::Class => "ClassName".into(),
                 ShapeKind::Trait => "TraitName".into(),
                 ShapeKind::File => "file.txt".into(),
+                ShapeKind::Enum => "EnumName".into(),
+                ShapeKind::External => "crate::Type".into(),
+                ShapeKind::Package => "package".into(),
+                ShapeKind::Directory => "data/".into(),
                 k if k.is_collection() => "T".into(),
                 _ => String::new(),
             },
-            fill: if is_text { NONE } else { WHITE },
+            fill: match kind {
+                ShapeKind::Text => NONE,
+                ShapeKind::Package => [246, 247, 250, 255],
+                _ => WHITE,
+            },
             stroke: if is_text { NONE } else { BLACK },
             stroke_width: 1.0,
             text_color: BLACK,
             font_size: 12.0,
             members: Vec::new(),
             key: if kind == ShapeKind::Dictionary { "K".into() } else { String::new() },
+            type_params: String::new(),
+            scope: Scope::Many,
+            task: None,
+            generated: false,
+            flags: false,
         }
+    }
+
+    /// Everything shown between guillemets above the name, e.g. `«trait, generated»` or
+    /// `«singleton, task every 1 s»`. `None` when there is nothing to say.
+    pub fn stereotype_text(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        match self.kind {
+            ShapeKind::Enum if self.flags => parts.push("flags".into()),
+            ShapeKind::Package | ShapeKind::Directory | ShapeKind::File => {}
+            k => {
+                if let Some(s) = k.stereotype() {
+                    parts.push(s.trim_matches(['\u{ab}', '\u{bb}']).to_owned());
+                }
+            }
+        }
+        if self.kind.is_object() {
+            if self.scope != Scope::Many {
+                parts.push(self.scope.name().to_owned());
+            }
+            if let Some(period) = &self.task {
+                let period = period.trim();
+                parts.push(if period.is_empty() { "task".to_owned() } else { format!("task {period}") });
+            }
+        }
+        if self.generated {
+            parts.push("generated".into());
+        }
+        (!parts.is_empty()).then(|| format!("\u{ab}{}\u{bb}", parts.join(", ")))
+    }
+
+    /// The name as shown in the header: with type parameters for generic types (`Table<R: Row>`).
+    pub fn title(&self) -> String {
+        let params = self.type_params.trim();
+        if self.kind.is_object() && !params.is_empty() {
+            format!("{}<{params}>", self.text)
+        } else {
+            self.text.clone()
+        }
+    }
+
+    /// For a package: its name tab.
+    pub fn package_tab(&self) -> Rect {
+        let r = self.rect();
+        Rect::from_min_size(
+            r.min,
+            vec2(
+                package_tab_width(&self.text, self.font_size, r.width()),
+                package_tab_height(self.font_size, r.height()),
+            ),
+        )
     }
 
     /// For a collection: the front card of its "stacked cards" shape.
@@ -354,6 +571,14 @@ impl Node {
     /// object's header, otherwise the whole shape.
     pub fn text_rect(&self) -> Rect {
         let r = self.rect();
+        if self.kind == ShapeKind::Package {
+            return self.package_tab();
+        }
+        if self.kind == ShapeKind::External || self.kind == ShapeKind::Directory {
+            // External: below its stereotype. Directory: below the folder tab.
+            let top = if self.kind == ShapeKind::External { self.font_size * 1.3 } else { self.font_size * 0.6 };
+            return Rect::from_min_max(pos2(r.left(), (r.top() + top).min(r.bottom())), r.max);
+        }
         if self.kind.is_collection() {
             // Below the stereotype on the front card.
             let front = self.collection_front();
@@ -363,8 +588,9 @@ impl Node {
         if !self.kind.is_object() {
             return r;
         }
-        let header = header_height(self.kind, self.font_size, r.height());
-        let top = if self.kind.stereotype().is_some() {
+        let has_stereotype = self.stereotype_text().is_some();
+        let header = header_height(has_stereotype, self.font_size, r.height());
+        let top = if has_stereotype {
             // Overlaps the stereotype band a little; the name is centered in what remains.
             (self.font_size * 1.3).min(header)
         } else {
@@ -566,6 +792,11 @@ impl PointerKind {
         }
     }
 
+    /// Whether "never null" applies (References are never null anyway; Weak can always expire).
+    pub fn can_be_required(self) -> bool {
+        matches!(self, PointerKind::Raw | PointerKind::Unique | PointerKind::Shared)
+    }
+
     /// Short text shown near the source end, e.g. `const *` or `unique_ptr<const>`.
     pub fn badge(self, const_target: bool) -> String {
         let smart = |name: &str| if const_target { format!("{name}<const>") } else { name.to_owned() };
@@ -589,16 +820,21 @@ pub enum RelationKind {
     /// Derived -> base. Valid from a class to another class, or from a trait to another
     /// trait (supertrait / extended interface).
     Inherits,
+    /// The source calls or depends on the target (not a member). Between packages it declares an
+    /// allowed dependency.
+    Uses,
 }
 
 impl RelationKind {
-    pub const ALL: [RelationKind; 3] = [RelationKind::Related, RelationKind::Implements, RelationKind::Inherits];
+    pub const ALL: [RelationKind; 4] =
+        [RelationKind::Related, RelationKind::Implements, RelationKind::Inherits, RelationKind::Uses];
 
     pub fn name(self) -> &'static str {
         match self {
             RelationKind::Related => "Related",
             RelationKind::Implements => "Implements",
             RelationKind::Inherits => "Inheritance",
+            RelationKind::Uses => "Uses",
         }
     }
 
@@ -608,6 +844,7 @@ impl RelationKind {
             RelationKind::Related => "Between any two objects",
             RelationKind::Implements => "From a class to the trait it implements",
             RelationKind::Inherits => "From the derived class to its base class (or trait to supertrait)",
+            RelationKind::Uses => "From a type to a type it calls, or from a package to a package it depends on",
         }
     }
 
@@ -622,6 +859,7 @@ impl RelationKind {
             RelationKind::Related => (LinePattern::Dotted, Head::None, Head::None),
             RelationKind::Implements => (LinePattern::Dashed, Head::None, Head::HollowArrow),
             RelationKind::Inherits => (LinePattern::Solid, Head::None, Head::HollowArrow),
+            RelationKind::Uses => (LinePattern::DashDot, Head::None, Head::OpenArrow),
         }
     }
 }
@@ -677,6 +915,12 @@ pub struct Edge {
     /// `Some` makes this line a relation (mutually exclusive with `pointer`).
     #[serde(default)]
     pub relation: Option<RelationKind>,
+    /// Lock guarding what a pointer reaches (`Arc<Mutex<T>>`).
+    #[serde(default)]
+    pub lock: Lock,
+    /// The pointer is never null (`[1]`); only for Raw, Unique and Shared.
+    #[serde(default)]
+    pub required: bool,
     pub style: EdgeStyle,
     #[serde(flatten, default)]
     pub legacy: LegacyEdge,
@@ -697,6 +941,8 @@ impl Edge {
             pointer: None,
             const_target: false,
             relation: None,
+            lock: Lock::None,
+            required: false,
             style,
             legacy: LegacyEdge::default(),
         }
@@ -729,11 +975,19 @@ impl Edge {
         }
     }
 
+    /// Pointer badge: kind and const (`unique_ptr<const>`), `[1]` when never null, and the lock
+    /// (`+ mutex`).
     pub fn badge(&self) -> Option<String> {
-        match self.link() {
-            Some(LinkKind::Pointer(k)) => Some(k.badge(self.const_target)),
-            _ => None,
+        let Some(LinkKind::Pointer(k)) = self.link() else { return None };
+        let mut b = k.badge(self.const_target);
+        if self.required && k.can_be_required() {
+            b.push_str(" [1]");
         }
+        if self.lock != Lock::None {
+            b.push_str(" + ");
+            b.push_str(self.lock.name());
+        }
+        Some(b)
     }
 }
 
@@ -819,6 +1073,10 @@ impl Diagram {
                     ShapeKind::Class => "a class",
                     ShapeKind::Trait => "a trait",
                     ShapeKind::File => "a file",
+                    ShapeKind::Directory => "a directory",
+                    ShapeKind::Enum => "an enum",
+                    ShapeKind::External => "an external type",
+                    ShapeKind::Package => "a package",
                     k if k.is_collection() => {
                         return format!("The {} of {}", k.name().to_lowercase(), self.display_text(n));
                     }
@@ -841,7 +1099,7 @@ impl Diagram {
     /// (`key -> value` for a dictionary).
     pub fn display_text(&self, n: &Node) -> String {
         if !n.kind.is_collection() {
-            return n.text.clone();
+            return n.title();
         }
         let or_q = |s: &str| if s.trim().is_empty() { "?".to_owned() } else { s.trim().to_owned() };
         let element = self
@@ -866,78 +1124,8 @@ impl Diagram {
 
     /// Like `link_error`, for existing line `edge` (which is not counted against itself).
     pub fn link_error_for(&self, edge: Option<Id>, kind: LinkKind, from: End, to: End) -> Option<String> {
-        if self.link_allowed_for(edge, kind, from, to) {
-            return None;
-        }
-        use ShapeKind::{Class, Trait};
-        let (fk, tk) = (self.node_kind(from), self.node_kind(to));
-        let collection_from = fk.is_some_and(|k| k.is_collection());
-        let (reason, rule) = match kind {
-            LinkKind::Pointer(_) if collection_from && fk != Some(ShapeKind::File) && tk != Some(ShapeKind::File) => {
-                let c = from.node().unwrap();
-                let reason = if from == to {
-                    format!("{} cannot contain itself.", self.describe(from))
-                } else {
-                    let other = self
-                        .element_pointer(c, edge)
-                        .and_then(|e| e.to.node())
-                        .and_then(|id| self.node(id))
-                        .map_or_else(|| "another object".to_owned(), |n| format!("\"{}\"", n.text));
-                    format!("{} already has an element pointer, to {other}.", self.describe(from))
-                };
-                (
-                    reason,
-                    "A pointer leaving a collection says what its elements are, so a collection has \
-                     exactly one. For pairs or several types, use a dictionary or a class as the element.",
-                )
-            }
-            LinkKind::Pointer(_) => (
-                format!(
-                    "{}. A file is not a value in the program's memory, so nothing can point to it \
-                     and it cannot point to anything.",
-                    self.describe(if fk == Some(ShapeKind::File) { from } else { to })
-                ),
-                "Use \"Related\" to show that an object reads or writes a file. A handle to an open \
-                 file is a field of the object (e.g. std::fstream, std::fs::File).",
-            ),
-            LinkKind::Relation(RelationKind::Implements) => (
-                match (fk, tk) {
-                    (Some(Trait), Some(Class)) => {
-                        "The direction is reversed: draw it from the class to the trait.".to_owned()
-                    }
-                    (Some(Class), Some(_)) => format!("{}, and only a trait can be implemented.", self.describe(to)),
-                    (Some(Class), None) => "It has to end on the trait being implemented.".to_owned(),
-                    (Some(_), _) => format!("{}, and only a class can implement a trait.", self.describe(from)),
-                    (None, _) => "It has to start on the class that implements the trait.".to_owned(),
-                },
-                "\"Implements\" must go from a class to the trait it implements.",
-            ),
-            LinkKind::Relation(RelationKind::Inherits) => (
-                match (fk, tk) {
-                    (None, _) => "It has to start on the derived class.".to_owned(),
-                    (_, None) => "It has to end on the base class.".to_owned(),
-                    _ if from == to => match fk {
-                        Some(Trait) => format!("{}. A trait cannot extend itself.", self.describe(from)),
-                        _ => format!("{}. A class cannot derive from itself.", self.describe(from)),
-                    },
-                    (Some(Class), Some(Trait)) => format!(
-                        "{}. A class doesn't inherit from a trait; use \"Implements\" for that.",
-                        self.describe(to)
-                    ),
-                    (Some(Trait), Some(Class)) => {
-                        format!("{}, and a trait can't inherit from a class.", self.describe(to))
-                    }
-                    _ => "Only classes and traits can take part in inheritance.".to_owned(),
-                },
-                "\"Inheritance\" goes from the derived class to its base class, \
-                 or from a trait to the trait it extends.",
-            ),
-            LinkKind::Relation(RelationKind::Related) => (
-                format!("{}. An object can't be related to itself.", self.describe(from)),
-                "\"Related\" connects two different objects.",
-            ),
-        };
-        Some(format!("{reason}\n\n{rule}").trim_end().to_owned())
+        self.link_problem(edge, kind, from, to)
+            .map(|(reason, rule)| format!("{reason}\n\n{rule}").trim_end().to_owned())
     }
 
     /// Whether a line of this kind may connect `from` to `to`.
@@ -947,24 +1135,137 @@ impl Diagram {
 
     /// Like `link_allowed`, for existing line `edge` (which is not counted against itself).
     pub fn link_allowed_for(&self, edge: Option<Id>, kind: LinkKind, from: End, to: End) -> bool {
+        self.link_problem(edge, kind, from, to).is_none()
+    }
+
+    /// Why a line of this kind may not connect `from` to `to`: (what is wrong, the rule).
+    /// `None` when it may. `edge` is the line itself when it already exists.
+    fn link_problem(&self, edge: Option<Id>, kind: LinkKind, from: End, to: End) -> Option<(String, String)> {
+        use ShapeKind::{Class, Enum, External, Package, Trait};
+        let (fk, tk) = (self.node_kind(from), self.node_kind(to));
+        let is = |k: Option<ShapeKind>, f: fn(ShapeKind) -> bool| k.is_some_and(f);
+        let s = |x: &str| x.to_owned();
         match kind {
+            LinkKind::Pointer(_) => {
+                if is(fk, ShapeKind::is_storage) || is(tk, ShapeKind::is_storage) {
+                    let end = if is(fk, ShapeKind::is_storage) { from } else { to };
+                    return Some((
+                        format!(
+                            "{}. Files and directories are not values in the program's memory, so \
+                             nothing can point to them and they cannot point to anything.",
+                            self.describe(end)
+                        ),
+                        s("Use \"Related\" to show that an object reads or writes a file. A handle to an \
+                           open file is a field of the object (e.g. std::fstream, std::fs::File)."),
+                    ));
+                }
+                if fk == Some(Package) || tk == Some(Package) {
+                    let end = if fk == Some(Package) { from } else { to };
+                    return Some((
+                        format!("{}. A pointer connects objects, not the packages that hold them.", self.describe(end)),
+                        s("Draw the pointer between objects inside the packages. To show that one package \
+                           depends on another, draw \"Uses\" between the packages."),
+                    ));
+                }
+                if fk == Some(External) {
+                    return Some((
+                        format!("{}. Its members are not part of this program, so it cannot own pointers.", self.describe(from)),
+                        s("Point from your own types to external ones, not the other way."),
+                    ));
+                }
+                if let Some(c) = from.node().filter(|_| is(fk, ShapeKind::is_collection)) {
+                    if from == to {
+                        return Some((
+                            format!("{} cannot contain itself.", self.describe(from)),
+                            s("A collection's elements are of another type."),
+                        ));
+                    }
+                    if let Some(other) = self.element_pointer(c, edge) {
+                        let target = other
+                            .to
+                            .node()
+                            .and_then(|id| self.node(id))
+                            .map_or_else(|| s("another object"), |n| format!("\"{}\"", n.text));
+                        return Some((
+                            format!("{} already has an element pointer, to {target}.", self.describe(from)),
+                            s("A pointer leaving a collection says what its elements are, so a collection has \
+                               exactly one. For pairs or several types, use a dictionary or a class as the element."),
+                        ));
+                    }
+                }
+                None
+            }
             LinkKind::Relation(RelationKind::Implements) => {
-                self.node_kind(from) == Some(ShapeKind::Class) && self.node_kind(to) == Some(ShapeKind::Trait)
+                let ok_from = matches!(fk, Some(Class) | Some(Enum));
+                let ok_to = matches!(tk, Some(Trait) | Some(External));
+                if ok_from && ok_to {
+                    return None;
+                }
+                let reason = match (fk, tk) {
+                    (None, _) => s("It has to start on the class that implements the trait."),
+                    (Some(Trait), Some(Class)) => s("The direction is reversed: draw it from the class to the trait."),
+                    _ if !ok_from => format!("{}, and only a class or an enum can implement a trait.", self.describe(from)),
+                    (_, None) => s("It has to end on the trait being implemented."),
+                    _ => format!("{}, and only a trait (or an external trait) can be implemented.", self.describe(to)),
+                };
+                Some((reason, s("\"Implements\" goes from a class or enum to the trait it implements.")))
             }
             LinkKind::Relation(RelationKind::Inherits) => {
-                let (fk, tk) = (self.node_kind(from), self.node_kind(to));
-                from != to && fk.is_some_and(|k| k.is_object()) && fk == tk
-            }
-            LinkKind::Relation(RelationKind::Related) => from.node().is_none() || from != to,
-            LinkKind::Pointer(_) => {
-                let no_file =
-                    self.node_kind(from) != Some(ShapeKind::File) && self.node_kind(to) != Some(ShapeKind::File);
-                // A pointer leaving a collection is its element type: one per collection, not itself.
-                let element_ok = match from.node().filter(|_| self.node_kind(from).is_some_and(|k| k.is_collection())) {
-                    Some(c) => from != to && self.element_pointer(c, edge).is_none(),
-                    None => true,
+                let ok = from != to && matches!(fk, Some(Class) | Some(Trait)) && fk == tk;
+                if ok {
+                    return None;
+                }
+                let reason = match (fk, tk) {
+                    (None, _) => s("It has to start on the derived class."),
+                    (_, None) => s("It has to end on the base class."),
+                    _ if from == to => match fk {
+                        Some(Trait) => format!("{}. A trait cannot extend itself.", self.describe(from)),
+                        _ => format!("{}. A class cannot derive from itself.", self.describe(from)),
+                    },
+                    (Some(Class), Some(Trait)) => format!(
+                        "{}. A class doesn't inherit from a trait; use \"Implements\" for that.",
+                        self.describe(to)
+                    ),
+                    (Some(Trait), Some(Class)) => format!("{}, and a trait can't inherit from a class.", self.describe(to)),
+                    _ => s("Only classes and traits can take part in inheritance."),
                 };
-                no_file && element_ok
+                Some((
+                    reason,
+                    s("\"Inheritance\" goes from the derived class to its base class, or from a trait to \
+                       the trait it extends."),
+                ))
+            }
+            LinkKind::Relation(RelationKind::Related) => (from.node().is_some() && from == to).then(|| {
+                (
+                    format!("{}. An object can't be related to itself.", self.describe(from)),
+                    s("\"Related\" connects two different objects."),
+                )
+            }),
+            LinkKind::Relation(RelationKind::Uses) => {
+                let rule = s("\"Uses\" goes from a type to a type it calls or depends on, or from a package to \
+                              a package it depends on.");
+                let user = |k: Option<ShapeKind>| is(k, ShapeKind::is_object) || k == Some(Package);
+                let used = |k: Option<ShapeKind>| {
+                    matches!(k, Some(Class) | Some(Trait) | Some(Enum) | Some(External) | Some(Package))
+                };
+                let reason = if fk.is_none() {
+                    s("It has to start on the type (or package) that does the using.")
+                } else if tk.is_none() {
+                    s("It has to end on the type (or package) being used.")
+                } else if from == to {
+                    format!("{}. Using itself says nothing.", self.describe(from))
+                } else if is(fk, ShapeKind::is_storage) || is(tk, ShapeKind::is_storage) {
+                    s("Files and directories are not called. Use \"Related\" to show that a type reads or writes them.")
+                } else if (fk == Some(Package)) != (tk == Some(Package)) {
+                    s("A package uses packages and a type uses types; this line mixes the two.")
+                } else if !user(fk) {
+                    format!("{}, which has no code of its own to do the calling.", self.describe(from))
+                } else if !used(tk) {
+                    format!("{}, which is data rather than something to call.", self.describe(to))
+                } else {
+                    return None;
+                };
+                Some((reason, rule))
             }
         }
     }
@@ -1010,7 +1311,60 @@ impl Diagram {
 
     /// Topmost node containing `p`.
     pub fn node_at(&self, p: Pos2) -> Option<Id> {
-        self.nodes.iter().rev().find(|n| n.rect().contains(p)).map(|n| n.id)
+        // Objects first, then the innermost (smallest) package around the point.
+        self.nodes
+            .iter()
+            .rev()
+            .find(|n| n.kind != ShapeKind::Package && n.rect().contains(p))
+            .or_else(|| {
+                self.nodes
+                    .iter()
+                    .filter(|n| n.kind == ShapeKind::Package && n.rect().contains(p))
+                    .min_by(|a, b| a.rect().area().total_cmp(&b.rect().area()))
+            })
+            .map(|n| n.id)
+    }
+
+    /// What a click at `p` selects: an object, else a line within `tol`, else the package frame
+    /// behind them. Lines come before packages because they are drawn on top of the frames.
+    pub fn hit(&self, p: Pos2, tol: f32) -> Option<Id> {
+        self.nodes
+            .iter()
+            .rev()
+            .find(|n| n.kind != ShapeKind::Package && n.rect().contains(p))
+            .map(|n| n.id)
+            .or_else(|| self.edge_at(p, tol))
+            .or_else(|| self.node_at(p))
+    }
+
+    /// The innermost package whose frame contains object `id` entirely.
+    pub fn package_of(&self, id: Id) -> Option<Id> {
+        let r = self.node(id)?.rect();
+        self.nodes
+            .iter()
+            .filter(|p| p.kind == ShapeKind::Package && p.id != id && p.rect().contains_rect(r))
+            .min_by(|a, b| a.rect().area().total_cmp(&b.rect().area()))
+            .map(|p| p.id)
+    }
+
+    /// Every object inside package `id`'s frame (at any depth).
+    pub fn package_contents(&self, id: Id) -> Vec<Id> {
+        let Some(frame) = self.node(id).map(|p| p.rect()) else { return Vec::new() };
+        self.nodes.iter().filter(|n| n.id != id && frame.contains_rect(n.rect())).map(|n| n.id).collect()
+    }
+
+    /// Package `id` and every package around it, innermost first.
+    pub fn package_chain(&self, id: Id) -> Vec<Id> {
+        let mut chain = Vec::new();
+        let mut cur = self.package_of(id);
+        while let Some(p) = cur {
+            if chain.contains(&p) {
+                break;
+            }
+            chain.push(p);
+            cur = self.package_of(p);
+        }
+        chain
     }
 
     /// Topmost edge within `tol` of `p`.
@@ -1537,7 +1891,7 @@ mod relation_tests {
         assert!(!d.link_allowed(IMPL, c, free), "dangling end");
         assert_eq!(d.link_error(IMPL, c, t), None);
         let msg = d.link_error(IMPL, c, c2).unwrap();
-        assert!(msg.contains("is a class") && msg.contains("only a trait can be implemented"), "{msg}");
+        assert!(msg.contains("is a class") && msg.contains("only a trait (or an external trait) can be implemented"), "{msg}");
         assert!(d.link_error(IMPL, t, c).unwrap().contains("reversed"));
         assert!(d.link_error(IMPL, c, free).unwrap().contains("end on the trait"));
         assert!(d.link_error(IMPL, free, t).unwrap().contains("start on the class"));
@@ -1635,7 +1989,7 @@ mod member_tests {
     use super::*;
 
     fn field(name: &str, ty: &str, v: Visibility) -> Member {
-        Member { kind: MemberKind::Field, visibility: v, name: name.into(), ty: ty.into(), params: String::new(), is_static: false }
+        Member { kind: MemberKind::Field, visibility: v, name: name.into(), ty: ty.into(), params: String::new(), is_static: false, is_async: false, repeat: 0 }
     }
 
     #[test]
@@ -1649,6 +2003,8 @@ mod member_tests {
             ty: "bool".into(),
             params: "ctx: Context".into(),
             is_static: true,
+            is_async: false,
+            repeat: 0,
         };
         assert_eq!(m.text(), "+ draw(ctx: Context): bool");
         let mut no_ret = m.clone();
@@ -1806,5 +2162,25 @@ mod collection_tests {
         assert!(n.rect().contains_rect(front) && front.contains_rect(t) && t.top() > front.top());
         let back: Node = serde_json::from_str(&serde_json::to_string(&n).unwrap()).unwrap();
         assert_eq!(back, n);
+    }
+}
+
+#[cfg(test)]
+mod hit_tests {
+    use super::*;
+
+    #[test]
+    fn lines_inside_a_package_are_clickable() {
+        let mut d = Diagram::default();
+        let pkg = d.add_node(ShapeKind::Package, pos2(0.0, 0.0)); // 420x300 around the origin
+        let a = d.add_node(ShapeKind::Class, pos2(-100.0, -60.0));
+        let b = d.add_node(ShapeKind::Class, pos2(100.0, 80.0));
+        let e = d.add_link(End::Node(a), End::Node(b), LinkKind::Pointer(PointerKind::Unique), false);
+        d.edge_mut(e).unwrap().style = EdgeStyle::Straight;
+        let mid = polyline_midpoint(&d.edge_path(d.edge(e).unwrap()).unwrap());
+
+        assert_eq!(d.hit(mid, 3.0), Some(e), "the line, not the package behind it");
+        assert_eq!(d.hit(pos2(-100.0, -60.0), 3.0), Some(a), "objects first");
+        assert_eq!(d.hit(pos2(180.0, -120.0), 3.0), Some(pkg), "empty frame area selects the package");
     }
 }

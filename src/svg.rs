@@ -59,7 +59,10 @@ pub fn export(d: &Diagram) -> String {
         b.height()
     );
 
-    for n in &d.nodes {
+    // Packages first: they are frames behind the objects they hold.
+    let (packages, objects): (Vec<&crate::model::Node>, Vec<&crate::model::Node>) =
+        d.nodes.iter().partition(|n| n.kind == ShapeKind::Package);
+    for n in packages.into_iter().chain(objects) {
         let r = n.rect();
         let paint = format!(
             r#"fill="{}" fill-opacity="{}" stroke="{}" stroke-opacity="{}" stroke-width="{}""#,
@@ -81,7 +84,48 @@ pub fn export(d: &Diagram) -> String {
                     r.height()
                 );
             }
-            ShapeKind::Class | ShapeKind::Trait => {
+            ShapeKind::External => {
+                let _ = writeln!(
+                    out,
+                    r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" rx="3" stroke-dasharray="6 4" {paint}/>"#,
+                    r.min.x,
+                    r.min.y,
+                    r.width(),
+                    r.height()
+                );
+            }
+            ShapeKind::Package => {
+                let tab = n.package_tab();
+                for b in [Rect::from_min_max(egui::pos2(r.left(), tab.bottom()), r.max), tab] {
+                    let _ = writeln!(
+                        out,
+                        r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" {paint}/>"#,
+                        b.min.x,
+                        b.min.y,
+                        b.width(),
+                        b.height()
+                    );
+                }
+            }
+            ShapeKind::Directory => {
+                let tab_h = (r.height() * 0.18).min(10.0);
+                let tab = [
+                    egui::pos2(r.left(), r.top()),
+                    egui::pos2(r.left() + r.width() * 0.36, r.top()),
+                    egui::pos2(r.left() + r.width() * 0.44, r.top() + tab_h),
+                    egui::pos2(r.left(), r.top() + tab_h),
+                ];
+                let _ = writeln!(out, r#"<polygon points="{}" {paint}/>"#, points(&tab));
+                let _ = writeln!(
+                    out,
+                    r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" {paint}/>"#,
+                    r.min.x,
+                    r.min.y + tab_h,
+                    r.width(),
+                    r.height() - tab_h
+                );
+            }
+            ShapeKind::Class | ShapeKind::Trait | ShapeKind::Enum => {
                 let _ = writeln!(
                     out,
                     r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" {paint}/>"#,
@@ -113,7 +157,8 @@ pub fn export(d: &Diagram) -> String {
                         r.height() - off
                     );
                 }
-                if let Some(stereotype) = k.stereotype() {
+                if let Some(stereotype) = n.stereotype_text() {
+                    let stereotype = stereotype.as_str();
                     let front = n.collection_front();
                     let band = stereotype_height(n.font_size, front.height());
                     let center = egui::pos2(front.center().x, front.top() + band / 2.0);
@@ -160,7 +205,8 @@ pub fn export(d: &Diagram) -> String {
                 }
             }
         }
-        if let Some(stereotype) = n.kind.stereotype().filter(|_| n.kind.is_object()) {
+        if let Some(stereotype) = n.stereotype_text().filter(|_| n.kind.is_object() || n.kind == ShapeKind::External) {
+            let stereotype = stereotype.as_str();
             let band = stereotype_height(n.font_size, r.height());
             let center = egui::pos2(r.center().x, r.top() + band / 2.0);
             text_block(&mut out, center, stereotype, n.font_size * 0.85, n.stroke);

@@ -5,7 +5,17 @@ use egui::{
     Stroke, StrokeKind,
 };
 
-use crate::model::{badge_center, edge_geometry, header_height, stereotype_height, Node, outline, Head, HeadFill, LinePattern, ShapeKind};
+use crate::model::{
+    badge_center, edge_geometry, header_height, package_tab_height, package_tab_width, stereotype_height, Node, outline,
+    Head, HeadFill, LinePattern, ShapeKind,
+};
+
+/// Per-object text a shape draws itself: the stereotype line and, for a package tab, the name.
+#[derive(Clone, Copy, Default)]
+pub struct Deco<'a> {
+    pub stereotype: Option<&'a str>,
+    pub name: &'a str,
+}
 
 /// `font_px` is the shape's font size in screen pixels (sizes the class name compartment).
 pub fn paint_shape(
@@ -16,19 +26,53 @@ pub fn paint_shape(
     stroke: Stroke,
     zoom: f32,
     font_px: f32,
+    deco: Deco,
 ) {
+    // The stereotype is skipped when too small to read (e.g. palette icons).
+    let stereotype = deco.stereotype.filter(|_| font_px * 0.85 >= 5.0);
+    let paint_stereotype = |area: Rect| {
+        if let Some(text) = stereotype {
+            let band = Rect::from_min_size(area.min, vec2(area.width(), stereotype_height(font_px, area.height())));
+            paint_text(painter, band, text, font_px * 0.85, stroke.color);
+        }
+    };
     match kind {
-        ShapeKind::Class | ShapeKind::Trait => {
+        ShapeKind::Class | ShapeKind::Trait | ShapeKind::Enum => {
             painter.rect(r, 0.0, fill, stroke, StrokeKind::Middle);
-            let y = r.top() + header_height(kind, font_px, r.height());
+            let y = r.top() + header_height(deco.stereotype.is_some(), font_px, r.height());
             if y < r.bottom() {
                 painter.line_segment([pos2(r.left(), y), pos2(r.right(), y)], stroke);
             }
-            // The stereotype is skipped when too small to read (e.g. palette icons).
-            if let Some(stereotype) = kind.stereotype().filter(|_| font_px * 0.85 >= 5.0) {
-                let band = Rect::from_min_size(r.min, vec2(r.width(), stereotype_height(font_px, r.height())));
-                paint_text(painter, band, stereotype, font_px * 0.85, stroke.color);
-            }
+            paint_stereotype(r);
+        }
+        ShapeKind::External => {
+            // Dashed border: a type that is not ours.
+            painter.rect_filled(r, 3.0, fill);
+            let corners = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+            painter.extend(Shape::dashed_line(&corners, stroke, 6.0 * zoom.max(0.3), 4.0 * zoom.max(0.3)));
+            paint_stereotype(r);
+        }
+        ShapeKind::Package => {
+            // A frame with a name tab on its top-left corner.
+            let tab_h = package_tab_height(font_px, r.height());
+            let tab_w = package_tab_width(deco.name, font_px, r.width());
+            let body = Rect::from_min_max(pos2(r.left(), r.top() + tab_h), r.max);
+            let tab = Rect::from_min_size(r.min, vec2(tab_w, tab_h));
+            painter.rect(body, 0.0, fill, stroke, StrokeKind::Middle);
+            painter.rect(tab, 0.0, fill, stroke, StrokeKind::Middle);
+        }
+        ShapeKind::Directory => {
+            // A folder: a body with a small tab on top.
+            let tab_h = (r.height() * 0.18).min(10.0 * zoom);
+            let body = Rect::from_min_max(pos2(r.left(), r.top() + tab_h), r.max);
+            let tab = vec![
+                pos2(r.left(), r.top()),
+                pos2(r.left() + r.width() * 0.36, r.top()),
+                pos2(r.left() + r.width() * 0.44, r.top() + tab_h),
+                pos2(r.left(), r.top() + tab_h),
+            ];
+            painter.add(Shape::convex_polygon(tab, fill, stroke));
+            painter.rect(body, 0.0, fill, stroke, StrokeKind::Middle);
         }
         ShapeKind::Rectangle | ShapeKind::Text => {
             painter.rect(r, 0.0, fill, stroke, StrokeKind::Middle);
@@ -68,10 +112,7 @@ pub fn paint_shape(
             let front = Rect::from_min_max(pos2(r.left(), r.top() + off), pos2(r.right() - off, r.bottom()));
             painter.rect(back, 2.0, fill, stroke, StrokeKind::Middle);
             painter.rect(front, 2.0, fill, stroke, StrokeKind::Middle);
-            if let Some(stereotype) = kind.stereotype().filter(|_| font_px * 0.85 >= 5.0) {
-                let band = Rect::from_min_size(front.min, vec2(front.width(), stereotype_height(font_px, front.height())));
-                paint_text(painter, band, stereotype, font_px * 0.85, stroke.color);
-            }
+            paint_stereotype(front);
         }
         ShapeKind::File => {
             if let Some(pts) = outline(kind, r) {

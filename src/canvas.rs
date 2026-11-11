@@ -9,7 +9,7 @@ use egui::{
 
 use crate::app::App;
 use crate::model::{color, label_center, End, Id, LinkKind, ShapeKind};
-use crate::render::{head_len, layout_centered, paint_badge, paint_edge, paint_members, paint_shape, paint_text};
+use crate::render::{head_len, layout_centered, paint_badge, paint_edge, paint_members, paint_shape, paint_text, Deco};
 
 pub const GRID: f32 = 10.0;
 const MIN_SIZE: f32 = 10.0;
@@ -216,7 +216,7 @@ impl App {
             }
         }
 
-        let hit = self.diagram.node_at(w).or_else(|| self.diagram.edge_at(w, EDGE_HIT / self.zoom));
+        let hit = self.diagram.hit(w, EDGE_HIT / self.zoom);
         if let Some(id) = hit {
             if !self.selection.contains(&id) {
                 if !shift {
@@ -224,8 +224,16 @@ impl App {
                 }
                 self.selection.insert(id);
             }
-            let orig = self
-                .selection
+            // A package carries everything inside its frame.
+            let mut moving: Vec<Id> = self.selection.iter().copied().collect();
+            for id in self.selection.iter() {
+                if self.diagram.node(*id).is_some_and(|n| n.kind == ShapeKind::Package) {
+                    moving.extend(self.diagram.package_contents(*id));
+                }
+            }
+            moving.sort_unstable();
+            moving.dedup();
+            let orig = moving
                 .iter()
                 .filter_map(|id| self.diagram.node(*id).map(|n| (*id, n.rect().min)))
                 .collect();
@@ -385,7 +393,7 @@ impl App {
             return;
         }
         let w = self.to_world(p);
-        let hit = self.diagram.node_at(w).or_else(|| self.diagram.edge_at(w, EDGE_HIT / self.zoom));
+        let hit = self.diagram.hit(w, EDGE_HIT / self.zoom);
         match hit {
             Some(id) if shift => {
                 if !self.selection.remove(&id) {
@@ -400,7 +408,7 @@ impl App {
 
     fn on_double_click(&mut self, p: Pos2) {
         let w = self.to_world(p);
-        let hit = self.diagram.node_at(w).or_else(|| self.diagram.edge_at(w, EDGE_HIT / self.zoom));
+        let hit = self.diagram.hit(w, EDGE_HIT / self.zoom);
         if let Some(id) = hit {
             self.start_editing(id);
         }
@@ -449,10 +457,15 @@ impl App {
             }
         }
 
-        for n in &self.diagram.nodes {
+        // Packages first: they are frames behind the objects they hold.
+        let (packages, objects): (Vec<&crate::model::Node>, Vec<&crate::model::Node>) =
+            self.diagram.nodes.iter().partition(|n| n.kind == ShapeKind::Package);
+        for n in packages.into_iter().chain(objects) {
             let sr = self.rect_to_screen(n.rect());
             let stroke = Stroke::new(n.stroke_width * z, color(n.stroke));
-            paint_shape(painter, n.kind, sr, color(n.fill), stroke, z, n.font_size * z);
+            let stereotype = n.stereotype_text();
+            let deco = Deco { stereotype: stereotype.as_deref(), name: &n.text };
+            paint_shape(painter, n.kind, sr, color(n.fill), stroke, z, n.font_size * z, deco);
             if self.editing != Some(n.id) {
                 let tr = self.rect_to_screen(n.text_rect());
                 paint_text(painter, tr, &self.diagram.display_text(n), n.font_size * z, color(n.text_color));
@@ -541,7 +554,8 @@ impl App {
         let (Some(kind), Some(p)) = (self.palette_drag, pointer) else { return };
         let painter = ui.ctx().layer_painter(LayerId::new(Order::Foreground, EguiId::unique("palette_ghost")));
         let r = Rect::from_center_size(p, kind.default_size() * self.zoom);
-        paint_shape(&painter, kind, r, SEL.gamma_multiply(0.08), Stroke::new(1.0, SEL), self.zoom, 12.0 * self.zoom);
+        let deco = Deco { stereotype: kind.stereotype(), name: kind.name() };
+        paint_shape(&painter, kind, r, SEL.gamma_multiply(0.08), Stroke::new(1.0, SEL), self.zoom, 12.0 * self.zoom, deco);
     }
 
     fn text_editor(&mut self, ui: &mut Ui) {
@@ -588,7 +602,7 @@ impl App {
         if resp.secondary_clicked() {
             if let Some(p) = pointer {
                 let w = self.to_world(p);
-                match self.diagram.node_at(w).or_else(|| self.diagram.edge_at(w, EDGE_HIT / self.zoom)) {
+                match self.diagram.hit(w, EDGE_HIT / self.zoom) {
                     Some(id) if !self.selection.contains(&id) => self.select_only(id),
                     Some(_) => {}
                     None => self.selection.clear(),

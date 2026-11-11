@@ -10,7 +10,7 @@ use crate::model::{
     Clip, Diagram, EdgeStyle, Head, Id, LinePattern, LinkKind, Member, MemberKind, Node, PointerKind, RelationKind,
     ShapeKind, Visibility,
 };
-use crate::render::{paint_edge, paint_shape};
+use crate::render::{paint_edge, paint_shape, Deco};
 
 const MAX_UNDO: usize = 200;
 
@@ -41,6 +41,8 @@ pub struct App {
     allow_close: bool,
     /// Fit the view once the canvas size is known (after opening a file).
     pub fit_pending: bool,
+    /// The Validate window is open (it re-checks the diagram every frame).
+    pub validate_open: bool,
     /// Active pointer/relation tool: the next drag (or click) on the canvas draws this kind of line.
     pub link_tool: Option<LinkKind>,
     /// Incorrect line shown with an error window until the user clicks OK.
@@ -75,6 +77,7 @@ impl Default for App {
             status: String::new(),
             allow_close: false,
             fit_pending: false,
+            validate_open: false,
             link_tool: None,
             link_error: None,
             pointer_const: false,
@@ -97,6 +100,7 @@ impl eframe::App for App {
         });
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
         self.link_error_window(&ctx);
+        self.validate_window(&ctx);
 
         self.commit_undo(&ctx);
         self.update_title(&ctx);
@@ -279,6 +283,56 @@ impl App {
         if title != self.title {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
             self.title = title;
+        }
+    }
+
+    // ---------------------------------------------------------------- validation
+
+    /// Lists every broken rule; clicking one selects what it is about and scrolls to it.
+    fn validate_window(&mut self, ctx: &egui::Context) {
+        if !self.validate_open {
+            return;
+        }
+        let issues = crate::validate::validate(&self.diagram);
+        let mut open = true;
+        let mut pick: Option<Vec<Id>> = None;
+        egui::Window::new(format!("Validate - {} problem(s)", issues.len()))
+            .id(egui::Id::unique("validate_window"))
+            .open(&mut open)
+            .default_width(460.0)
+            .default_height(360.0)
+            .show(ctx, |ui| {
+                if issues.is_empty() {
+                    ui.label("No problems found. The diagram follows every rule the editor can check.");
+                    return;
+                }
+                ui.weak("Rule ids refer to docs/language-spec.md. Click a problem to show it.");
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for (i, issue) in issues.iter().enumerate() {
+                        ui.push_id(i, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.monospace(format!("{:<4}", issue.rule));
+                                if ui.link(&issue.message).clicked() {
+                                    pick = Some(issue.items.clone());
+                                }
+                            });
+                        });
+                    }
+                });
+            });
+        self.validate_open = open;
+        if let Some(items) = pick {
+            self.selection = items.iter().copied().filter(|id| self.diagram.node(*id).is_some() || self.diagram.edge(*id).is_some()).collect();
+            // Scroll so the first item is in the middle of the canvas.
+            let first = items.iter().find_map(|id| {
+                self.diagram.node(*id).map(|n| n.rect().center()).or_else(|| {
+                    self.diagram.edge(*id).and_then(|e| self.diagram.edge_path(e)).map(|p| crate::model::polyline_midpoint(&p))
+                })
+            });
+            if let Some(c) = first {
+                self.pan = self.canvas_rect.size() / 2.0 - c.to_vec2() * self.zoom;
+            }
         }
     }
 
@@ -525,6 +579,11 @@ impl App {
                 ui.checkbox(&mut self.show_grid, "Grid");
                 ui.checkbox(&mut self.snap, "Snap to grid");
             });
+            ui.menu_button("Diagram", |ui| {
+                if ui.button("Validate").on_hover_text("Check the whole diagram against the language rules").clicked() {
+                    self.validate_open = true;
+                }
+            });
             ui.menu_button("Arrange", |ui| {
                 let has_sel = !self.selection.is_empty();
                 if ui.add_enabled(has_sel, egui::Button::new("To front")).clicked() {
@@ -581,6 +640,10 @@ impl App {
             }
             if ui.button("Fit").clicked() {
                 self.fit_view();
+            }
+            ui.separator();
+            if ui.button("Validate").on_hover_text("Check the whole diagram against the language rules").clicked() {
+                self.validate_open = true;
             }
             ui.separator();
             ui.checkbox(&mut self.show_grid, "Grid");
@@ -660,6 +723,12 @@ impl App {
                 "inherit",
                 "click, then drag from the derived class to the base class",
             );
+            self.link_tile(
+                ui,
+                LinkKind::Relation(RelationKind::Uses),
+                "uses",
+                "click, then drag from a type to a type it calls (or between packages: a dependency)",
+            );
         });
     }
 
@@ -699,9 +768,14 @@ impl App {
                 let scale = (icon_area.width() / size.x).min(icon_area.height() / size.y);
                 let icon = Rect::from_center_size(icon_area.center(), size * scale);
                 let stroke_col = ui.visuals().text_color();
-                paint_shape(ui.painter(), kind, icon, Color32::WHITE, Stroke::new(1.2, stroke_col), scale, 12.0 * scale);
+                let deco = Deco { stereotype: kind.stereotype(), name: "" };
+                paint_shape(ui.painter(), kind, icon, Color32::WHITE, Stroke::new(1.2, stroke_col), scale, 12.0 * scale, deco);
                 let caption = match kind {
                     ShapeKind::Trait => "trait",
+                    ShapeKind::Enum => "enum",
+                    ShapeKind::External => "extern",
+                    ShapeKind::Package => "package",
+                    ShapeKind::Directory => "dir",
                     ShapeKind::File => "file",
                     ShapeKind::Set => "set",
                     ShapeKind::Vector => "vector",
@@ -841,13 +915,60 @@ impl App {
             ui.strong(match n.kind {
                 ShapeKind::Trait => "Trait",
                 ShapeKind::File => "File",
+                ShapeKind::Directory => "Directory",
+                ShapeKind::Enum => "Enum",
+                ShapeKind::External => "External type",
+                ShapeKind::Package => "Package",
                 _ => "Class",
             });
             ui.separator();
             egui::Grid::new("class_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                 ui.label("Name");
-                ui.add(egui::TextEdit::singleline(&mut n.text).desired_width(f32::INFINITY));
+                let hint = match n.kind {
+                    ShapeKind::External => "e.g. tokio::sync::Notify",
+                    ShapeKind::File => "e.g. config/settings.toml",
+                    ShapeKind::Directory => "e.g. data/<Table>/",
+                    _ => "",
+                };
+                ui.add(egui::TextEdit::singleline(&mut n.text).hint_text(hint).desired_width(f32::INFINITY));
                 ui.end_row();
+                if n.kind.is_object() {
+                    ui.label("Type params").on_hover_text("Generic parameters with bounds, e.g. R: Row");
+                    ui.add(egui::TextEdit::singleline(&mut n.type_params).hint_text("none").desired_width(f32::INFINITY));
+                    ui.end_row();
+                }
+                if matches!(n.kind, ShapeKind::Class | ShapeKind::Enum) {
+                    ui.label("Scope").on_hover_text("How many values of this type a running program has");
+                    egui::ComboBox::from_id_salt("scope").selected_text(n.scope.name()).show_ui(ui, |ui| {
+                        for s in crate::model::Scope::ALL {
+                            ui.selectable_value(&mut n.scope, s, s.name());
+                        }
+                    });
+                    ui.end_row();
+                }
+                if n.kind == ShapeKind::Class {
+                    ui.label("Task").on_hover_text("An active object: runs on its own (a thread, timer or async task)");
+                    ui.horizontal(|ui| {
+                        let mut is_task = n.task.is_some();
+                        if ui.checkbox(&mut is_task, "").changed() {
+                            n.task = is_task.then(String::new);
+                        }
+                        if let Some(period) = &mut n.task {
+                            ui.add(egui::TextEdit::singleline(period).hint_text("every 1 s").desired_width(f32::INFINITY));
+                        }
+                    });
+                    ui.end_row();
+                }
+                if n.kind == ShapeKind::Enum {
+                    ui.label("Flags").on_hover_text("Variants are bit flags that combine");
+                    ui.checkbox(&mut n.flags, "");
+                    ui.end_row();
+                }
+                if n.kind.is_object() {
+                    ui.label("Generated").on_hover_text("Source produced by a tool, not written by hand");
+                    ui.checkbox(&mut n.generated, "");
+                    ui.end_row();
+                }
             });
             if n.kind.is_object() {
                 members_ui(ui, &mut n);
@@ -915,8 +1036,16 @@ impl App {
                 n.size[0] = n.size[0].max(w);
             }
             // Grow the box so the name and all members stay visible.
+            let header_changed = n.type_params != before.type_params
+                || n.scope != before.scope
+                || n.task != before.task
+                || n.generated != before.generated
+                || n.flags != before.flags;
             if n.kind.is_named()
-                && (n.members != before.members || n.text != before.text || n.font_size != before.font_size)
+                && (n.members != before.members
+                    || n.text != before.text
+                    || n.font_size != before.font_size
+                    || header_changed)
             {
                 let painter = ui.painter();
                 let font = egui::FontId::proportional(n.font_size);
@@ -1004,10 +1133,23 @@ impl App {
                 }
             }
             ui.end_row();
-            if e.pointer.is_some() {
+            if let Some(kind) = e.pointer {
                 ui.label("Target");
                 ui.checkbox(&mut e.const_target, "const");
                 ui.end_row();
+                ui.label("Lock").on_hover_text("What guards the pointed-to value: Arc<Mutex<T>>, Arc<RwLock<T>>");
+                egui::ComboBox::from_id_salt("edge_lock").selected_text(e.lock.name()).show_ui(ui, |ui| {
+                    for l in crate::model::Lock::ALL {
+                        ui.selectable_value(&mut e.lock, l, l.name());
+                    }
+                });
+                ui.end_row();
+                if kind.can_be_required() {
+                    ui.label("Never null").on_hover_text("Always set (shown as [1]); otherwise it may be empty");
+                    ui.checkbox(&mut e.required, "");
+                    ui.end_row();
+                }
+            } else if e.relation.is_some() {
             } else {
                 ui.label("Pattern");
                 egui::ComboBox::from_id_salt("edge_pattern").selected_text(e.pattern.name()).show_ui(ui, |ui| {
@@ -1084,14 +1226,22 @@ impl App {
             if e.const_target != before.const_target {
                 t.const_target = e.const_target;
             }
+            if e.lock != before.lock {
+                t.lock = e.lock;
+            }
+            if e.required != before.required {
+                t.required = e.required;
+            }
         }
     }
 }
 
 /// Fields and Methods sections of the format panel for one class or trait.
 fn members_ui(ui: &mut Ui, n: &mut Node) {
-    if n.kind == ShapeKind::Class {
-        member_section(ui, n, MemberKind::Field, "Fields");
+    match n.kind {
+        ShapeKind::Class => member_section(ui, n, MemberKind::Field, "Fields"),
+        ShapeKind::Enum => member_section(ui, n, MemberKind::Variant, "Variants"),
+        _ => {}
     }
     member_section(ui, n, MemberKind::Method, "Methods");
 }
@@ -1109,7 +1259,11 @@ fn member_section(ui: &mut Ui, n: &mut Node, kind: MemberKind, title: &str) {
     ui.horizontal(|ui| {
         ui.strong(title);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let label = if kind == MemberKind::Field { "+ Add field" } else { "+ Add method" };
+            let label = match kind {
+                MemberKind::Field => "+ Add field",
+                MemberKind::Method => "+ Add method",
+                MemberKind::Variant => "+ Add variant",
+            };
             if ui.small_button(label).clicked() {
                 let m = Member::new(kind, owner, &n.members);
                 n.members.push(m);
@@ -1120,7 +1274,11 @@ fn member_section(ui: &mut Ui, n: &mut Node, kind: MemberKind, title: &str) {
 
     let rows: Vec<usize> = (0..n.members.len()).filter(|&i| n.members[i].kind == kind).collect();
     if rows.is_empty() {
-        ui.weak(if kind == MemberKind::Field { "No fields." } else { "No methods." });
+        ui.weak(match kind {
+            MemberKind::Field => "No fields.",
+            MemberKind::Method => "No methods.",
+            MemberKind::Variant => "No variants.",
+        });
         return;
     }
     let mut action: Option<(usize, RowAction)> = None;
@@ -1129,7 +1287,10 @@ fn member_section(ui: &mut Ui, n: &mut Node, kind: MemberKind, title: &str) {
         ui.push_id(i, |ui| {
             egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if in_trait {
+                    if m.kind == MemberKind::Variant {
+                        // Variants have no visibility of their own.
+                        m.visibility = Visibility::Public;
+                    } else if in_trait {
                         // Trait members are part of the interface: always public.
                         m.visibility = Visibility::Public;
                         ui.label("+").on_hover_text("Trait members are always public");
@@ -1175,13 +1336,36 @@ fn member_section(ui: &mut Ui, n: &mut Node, kind: MemberKind, title: &str) {
                     });
                 }
                 ui.horizontal(|ui| {
-                    ui.label(if m.kind == MemberKind::Method { "returns" } else { "type" });
-                    let hint = if m.kind == MemberKind::Method { "none" } else { "int" };
+                    ui.label(match m.kind {
+                        MemberKind::Method => "returns",
+                        MemberKind::Field => "type",
+                        MemberKind::Variant => "data",
+                    });
+                    let hint = match m.kind {
+                        MemberKind::Method => "none",
+                        MemberKind::Field => "int",
+                        MemberKind::Variant => "none, or e.g. LoginRequest",
+                    };
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.checkbox(&mut m.is_static, "static").on_hover_text("Belongs to the type, not to each value");
+                        if m.kind != MemberKind::Variant {
+                            ui.checkbox(&mut m.is_static, "static")
+                                .on_hover_text("Belongs to the type, not to each value");
+                        }
                         ui.add(egui::TextEdit::singleline(&mut m.ty).hint_text(hint).desired_width(f32::INFINITY));
                     });
                 });
+                {
+                    ui.horizontal(|ui| {
+                        if m.kind == MemberKind::Method {
+                            ui.checkbox(&mut m.is_async, "async").on_hover_text("Runs asynchronously (async fn)");
+                        }
+                        ui.label("repeat").on_hover_text(
+                            "This line stands for this many members of the same shape, e.g. 74 generated \
+                             table fields. 0 or 1 = just this one.",
+                        );
+                        ui.add(egui::DragValue::new(&mut m.repeat).range(0..=100_000));
+                    });
+                }
             });
         });
     }

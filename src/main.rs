@@ -6,10 +6,38 @@ mod canvas;
 mod model;
 mod render;
 mod svg;
+mod validate;
 
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    // `architect_ai --validate diagram.json`: check a diagram against the language rules without
+    // opening a window. Prints one line per problem; exit code 1 when there are any.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--validate") {
+        let Some(path) = args.get(1) else {
+            eprintln!("usage: architect_ai --validate <diagram.json>");
+            std::process::exit(2);
+        };
+        let diagram = std::fs::read_to_string(path)
+            .map_err(|e| e.to_string())
+            .and_then(|s| serde_json::from_str::<model::Diagram>(&s).map_err(|e| e.to_string()));
+        let mut diagram = match diagram {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("{path}: {e}");
+                std::process::exit(2);
+            }
+        };
+        diagram.migrate();
+        let issues = validate::validate(&diagram);
+        for i in &issues {
+            println!("{:<4} {}", i.rule, i.message);
+        }
+        println!("{} problem(s)", issues.len());
+        std::process::exit(if issues.is_empty() { 0 } else { 1 });
+    }
+
     #[allow(unused_mut)]
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
