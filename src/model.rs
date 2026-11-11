@@ -574,12 +574,41 @@ impl Diagram {
         end.node().and_then(|id| self.node(id)).map(|n| n.kind)
     }
 
-    /// Whether a line of this kind may start at `from` (checked before the target is known).
-    pub fn link_can_start(&self, kind: LinkKind, from: End) -> bool {
-        match kind {
-            LinkKind::Relation(RelationKind::Implements) => self.node_kind(from) == Some(ShapeKind::Class),
-            _ => true,
+    /// How an end is called in messages: the object's name and kind, or empty canvas.
+    fn describe(&self, end: End) -> String {
+        match end.node().and_then(|id| self.node(id)) {
+            Some(n) => {
+                let kind = match n.kind {
+                    ShapeKind::Class => "a class",
+                    ShapeKind::Trait => "a trait",
+                    _ => "a shape",
+                };
+                format!("\"{}\" is {kind}", n.text)
+            }
+            None => "The end is on empty canvas".to_owned(),
         }
+    }
+
+    /// Explanation for the user when a line of this kind may not connect `from` to `to`
+    /// (`None` if it may).
+    pub fn link_error(&self, kind: LinkKind, from: End, to: End) -> Option<String> {
+        if self.link_allowed(kind, from, to) {
+            return None;
+        }
+        let rule = format!("\"{}\" must go from a class to the trait it implements.", kind.name());
+        let reason = match (self.node_kind(from), self.node_kind(to)) {
+            (Some(ShapeKind::Trait), Some(ShapeKind::Class)) => {
+                "The direction is reversed: draw it from the class to the trait.".to_owned()
+            }
+            (Some(ShapeKind::Class), Some(_)) => format!(
+                "{}, and only a trait can be implemented.",
+                self.describe(to)
+            ),
+            (Some(ShapeKind::Class), None) => "It has to end on the trait being implemented.".to_owned(),
+            (Some(_), _) => format!("{}, and only a class can implement a trait.", self.describe(from)),
+            (None, _) => "It has to start on the class that implements the trait.".to_owned(),
+        };
+        Some(format!("{reason}\n\n{rule}"))
     }
 
     /// Whether a line of this kind may connect `from` to `to`.
@@ -1158,9 +1187,12 @@ mod relation_tests {
         assert!(!d.link_allowed(IMPL, t, c), "trait to class");
         assert!(!d.link_allowed(IMPL, c, c2), "class to class");
         assert!(!d.link_allowed(IMPL, c, free), "dangling end");
-        assert!(d.link_can_start(IMPL, c));
-        assert!(!d.link_can_start(IMPL, t));
-        assert!(!d.link_can_start(IMPL, free));
+        assert_eq!(d.link_error(IMPL, c, t), None);
+        let msg = d.link_error(IMPL, c, c2).unwrap();
+        assert!(msg.contains("is a class") && msg.contains("only a trait can be implemented"), "{msg}");
+        assert!(d.link_error(IMPL, t, c).unwrap().contains("reversed"));
+        assert!(d.link_error(IMPL, c, free).unwrap().contains("end on the trait"));
+        assert!(d.link_error(IMPL, free, t).unwrap().contains("start on the class"));
 
         // Related and pointers connect anything.
         assert!(d.link_allowed(RELATED, t, free));

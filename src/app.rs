@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use egui::{vec2, Color32, Event, Key, Modifiers, Pos2, Rect, Sense, Stroke, Ui, Vec2, ViewportCommand};
 
-use crate::canvas::Drag;
+use crate::canvas::{Drag, LinkError};
 use crate::model::{Clip, Diagram, EdgeStyle, Head, Id, LinePattern, LinkKind, PointerKind, RelationKind, ShapeKind};
 use crate::render::{paint_edge, paint_shape};
 
@@ -41,6 +41,8 @@ pub struct App {
     pub fit_pending: bool,
     /// Active pointer/relation tool: the next drag (or click) on the canvas draws this kind of line.
     pub link_tool: Option<LinkKind>,
+    /// Incorrect line shown with an error window until the user clicks OK.
+    pub link_error: Option<LinkError>,
     /// New pointers point to a const object.
     pub pointer_const: bool,
 }
@@ -73,6 +75,7 @@ impl Default for App {
             allow_close: false,
             fit_pending: false,
             link_tool: None,
+            link_error: None,
             pointer_const: false,
         }
     }
@@ -92,6 +95,7 @@ impl eframe::App for App {
             egui::ScrollArea::vertical().show(ui, |ui| self.format_panel(ui));
         });
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
+        self.link_error_window(&ctx);
 
         self.commit_undo(&ctx);
         self.update_title(&ctx);
@@ -102,7 +106,8 @@ impl App {
     // ---------------------------------------------------------------- history
 
     fn commit_undo(&mut self, ctx: &egui::Context) {
-        if self.diagram == self.stable {
+        // An incorrect line on screen is temporary; it must not become an undo step.
+        if self.diagram == self.stable || self.link_error.is_some() {
             return;
         }
         // Wait until a drag or text edit is finished so it becomes a single undo step.
@@ -277,6 +282,45 @@ impl App {
         }
     }
 
+    // ---------------------------------------------------------------- incorrect relations
+
+    /// Modal error window for an incorrect relation; OK (or Enter/Esc) undoes the relation.
+    fn link_error_window(&mut self, ctx: &egui::Context) {
+        let Some(err) = &self.link_error else { return };
+        let mut ok = false;
+        // Near the top, so the incorrect (red) line on the canvas stays visible.
+        let id = egui::Id::unique("link_error");
+        let area = egui::Modal::default_area(id).anchor(egui::Align2::CENTER_TOP, vec2(0.0, 120.0));
+        egui::Modal::new(id).area(area).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.heading("Incorrect relation");
+            ui.add_space(8.0);
+            ui.label(&err.message);
+            ui.add_space(12.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ok = ui.add(egui::Button::new("   OK   ")).clicked();
+            });
+        });
+        if ok || ctx.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Escape)) {
+            self.dismiss_link_error();
+        }
+    }
+
+    fn dismiss_link_error(&mut self) {
+        let Some(err) = self.link_error.take() else { return };
+        match err.restore {
+            Some((end, orig)) => {
+                if let Some(e) = self.diagram.edge_mut(err.id) {
+                    if end == 0 { e.from = orig } else { e.to = orig }
+                }
+            }
+            None => {
+                self.diagram.edges.retain(|e| e.id != err.id);
+                self.selection.remove(&err.id);
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- edit actions
 
     pub fn delete_selected(&mut self) {
@@ -337,7 +381,7 @@ impl App {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() || self.link_error.is_some() {
             return;
         }
         let key = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_key(m, k));
@@ -948,5 +992,46 @@ impl App {
                 t.const_target = e.const_target;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::End;
+    use egui::pos2;
+
+    fn app_with_classes() -> (App, Id, Id, Id) {
+        let mut app = App::default();
+        let c1 = app.diagram.add_node(ShapeKind::Class, pos2(0.0, 0.0));
+        let c2 = app.diagram.add_node(ShapeKind::Class, pos2(300.0, 0.0));
+        let t = app.diagram.add_node(ShapeKind::Trait, pos2(0.0, 300.0));
+        (app, c1, c2, t)
+    }
+
+    #[test]
+    fn ok_removes_an_incorrect_new_relation() {
+        let (mut app, c1, c2, _) = app_with_classes();
+        let implements = LinkKind::Relation(RelationKind::Implements);
+        let id = app.diagram.add_link(End::Node(c1), End::Node(c2), implements, false);
+        let message = app.diagram.link_error(implements, End::Node(c1), End::Node(c2)).unwrap();
+        app.link_error = Some(LinkError { id, restore: None, message });
+
+        app.dismiss_link_error();
+        assert!(app.diagram.edge(id).is_none());
+        assert!(app.link_error.is_none());
+    }
+
+    #[test]
+    fn ok_restores_a_moved_end_of_a_correct_relation() {
+        let (mut app, c1, c2, t) = app_with_classes();
+        let implements = LinkKind::Relation(RelationKind::Implements);
+        let id = app.diagram.add_link(End::Node(c1), End::Node(t), implements, false);
+        // The user dragged the trait end onto another class.
+        app.diagram.edge_mut(id).unwrap().to = End::Node(c2);
+        app.link_error = Some(LinkError { id, restore: Some((1, End::Node(t))), message: String::new() });
+
+        app.dismiss_link_error();
+        assert_eq!(app.diagram.edge(id).unwrap().to, End::Node(t));
     }
 }

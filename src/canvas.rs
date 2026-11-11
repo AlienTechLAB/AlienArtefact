@@ -19,6 +19,16 @@ const ARROW_HIT: f32 = 10.0;
 const EDGE_HIT: f32 = 6.0;
 const SEL: Color32 = Color32::from_rgb(0, 120, 215);
 const HOVER: Color32 = Color32::from_rgb(41, 182, 242);
+const ERROR: Color32 = Color32::from_rgb(214, 39, 40);
+
+/// An incorrect line waiting for the user to acknowledge the error window.
+pub struct LinkError {
+    pub id: Id,
+    /// For an existing line whose end was moved: which end and where it was before.
+    /// `None` for a line being drawn, which is removed instead.
+    pub restore: Option<(usize, End)>,
+    pub message: String,
+}
 
 pub enum Drag {
     None,
@@ -220,10 +230,6 @@ impl App {
         // Pointer/relation tool: start a new line here and drag its end.
         if let Some(kind) = self.link_tool.take() {
             let from = self.end_at(w, None);
-            if !self.diagram.link_can_start(kind, from) {
-                self.status = format!("{} must start on a class.", kind.name());
-                return;
-            }
             let orig = End::point(w);
             let id = self.diagram.add_link(from, orig, kind, self.pointer_const);
             self.select_only(id);
@@ -364,18 +370,14 @@ impl App {
                 let new_end = self.end_at(w, exclude);
                 if let Some(kind) = e.link() {
                     let (from, to) = if end == 0 { (new_end, other) } else { (other, new_end) };
-                    if !self.diagram.link_allowed(kind, from, to) {
-                        let (from, to) = if end == 0 { (orig, other) } else { (other, orig) };
-                        if self.diagram.link_allowed(kind, from, to) {
-                            // Existing line: put the end back where it was.
-                            let e = self.diagram.edge_mut(id).unwrap();
-                            if end == 0 { e.from = orig } else { e.to = orig }
-                        } else {
-                            // Line being drawn: drop it.
-                            self.diagram.edges.retain(|e| e.id != id);
-                            self.selection.remove(&id);
-                        }
-                        self.status = format!("{} must go from a class to a trait.", kind.name());
+                    if let Some(message) = self.diagram.link_error(kind, from, to) {
+                        // Show the incorrect line where it was dropped until the user closes the
+                        // error window; then it is undone (see `App::dismiss_link_error`).
+                        let (old_from, old_to) = if end == 0 { (orig, other) } else { (other, orig) };
+                        let restore = self.diagram.link_allowed(kind, old_from, old_to).then_some((end, orig));
+                        let e = self.diagram.edge_mut(id).unwrap();
+                        if end == 0 { e.from = new_end } else { e.to = new_end }
+                        self.link_error = Some(LinkError { id, restore, message });
                         return;
                     }
                 }
@@ -552,7 +554,12 @@ impl App {
                 painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + 6.0, SEL.gamma_multiply(0.25))));
             }
             let (pattern, start, end) = e.look();
-            paint_edge(painter, &sp, color(e.color), e.width * z, pattern, start, end, z);
+            let invalid = self.link_error.as_ref().is_some_and(|err| err.id == e.id);
+            let col = if invalid { ERROR } else { color(e.color) };
+            if invalid {
+                painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + 6.0, ERROR.gamma_multiply(0.25))));
+            }
+            paint_edge(painter, &sp, col, e.width * z, pattern, start, end, z);
             if let Some(badge) = e.badge() {
                 let len = head_len(e.width * z, z);
                 paint_badge(painter, &sp, len, &badge, 10.0 * z, color(e.color));
