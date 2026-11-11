@@ -34,6 +34,31 @@ pub enum ShapeKind {
     /// Interface (Rust trait, C# interface, C++ pure virtual class): like a class,
     /// with a `«trait»` stereotype above the name.
     Trait,
+    /// A file outside the program's memory (config, data, asset, log): a document shape with
+    /// a folded corner. Not a type: no members, no pointers.
+    File,
+    /// Collections: containers of elements of one type. The element type comes from the
+    /// collection's one outgoing pointer, or from its `text` (a type outside the diagram).
+    /// Unique elements, no order.
+    Set,
+    /// Ordered, indexable sequence.
+    Vector,
+    /// Key -> value map; the key type is `Node::key`.
+    Dictionary,
+    /// Hierarchy: every element has child elements.
+    Tree,
+    /// First in, first out.
+    Queue,
+}
+
+/// Offset between the two "stacked cards" of a collection shape (world units).
+pub fn collection_offset(w: f32, h: f32) -> f32 {
+    6.0f32.min(w / 6.0).min(h / 6.0)
+}
+
+/// Size of a file shape's folded corner for a shape of size `w` x `h`.
+pub fn file_fold(w: f32, h: f32) -> f32 {
+    (w.min(h) * 0.22).min(w * 0.5)
 }
 
 /// Height of an object's header compartment (stereotype + name), for a given font size
@@ -51,17 +76,35 @@ pub fn stereotype_height(font_size: f32, box_height: f32) -> f32 {
 impl ShapeKind {
     /// Shapes offered in the "Objects" palette section. The other kinds can no longer be
     /// created, but stay so diagrams that contain them still open and draw.
-    pub const OBJECTS: [ShapeKind; 2] = [ShapeKind::Class, ShapeKind::Trait];
+    pub const OBJECTS: [ShapeKind; 3] = [ShapeKind::Class, ShapeKind::Trait, ShapeKind::File];
 
-    /// Class-like objects: a header with the name, body below.
+    /// Shapes offered in the "Collections" palette section.
+    pub const COLLECTIONS: [ShapeKind; 5] =
+        [ShapeKind::Set, ShapeKind::Vector, ShapeKind::Dictionary, ShapeKind::Tree, ShapeKind::Queue];
+
+    pub fn is_collection(self) -> bool {
+        Self::COLLECTIONS.contains(&self)
+    }
+
+    /// Class-like objects (types): a header with the name, members below.
     pub fn is_object(self) -> bool {
         matches!(self, ShapeKind::Class | ShapeKind::Trait)
+    }
+
+    /// Language elements with a one-line name edited in the right panel (types and files).
+    pub fn is_named(self) -> bool {
+        self.is_object() || self == ShapeKind::File
     }
 
     /// UML stereotype shown above the name, e.g. `«trait»`.
     pub fn stereotype(self) -> Option<&'static str> {
         match self {
             ShapeKind::Trait => Some("\u{ab}trait\u{bb}"),
+            ShapeKind::Set => Some("\u{ab}set\u{bb}"),
+            ShapeKind::Vector => Some("\u{ab}vector\u{bb}"),
+            ShapeKind::Dictionary => Some("\u{ab}dictionary\u{bb}"),
+            ShapeKind::Tree => Some("\u{ab}tree\u{bb}"),
+            ShapeKind::Queue => Some("\u{ab}queue\u{bb}"),
             _ => None,
         }
     }
@@ -79,6 +122,12 @@ impl ShapeKind {
             ShapeKind::Text => "Text",
             ShapeKind::Class => "Class / struct",
             ShapeKind::Trait => "Trait / interface",
+            ShapeKind::File => "File",
+            ShapeKind::Set => "Set",
+            ShapeKind::Vector => "Vector",
+            ShapeKind::Dictionary => "Dictionary",
+            ShapeKind::Tree => "Tree",
+            ShapeKind::Queue => "Queue",
         }
     }
 
@@ -91,6 +140,10 @@ impl ShapeKind {
             ShapeKind::Cylinder => vec2(60.0, 80.0),
             ShapeKind::Text => vec2(80.0, 30.0),
             ShapeKind::Class | ShapeKind::Trait => vec2(160.0, 100.0),
+            ShapeKind::File => vec2(140.0, 70.0),
+            ShapeKind::Set | ShapeKind::Vector | ShapeKind::Dictionary | ShapeKind::Tree | ShapeKind::Queue => {
+                vec2(140.0, 64.0)
+            }
             _ => vec2(120.0, 60.0),
         }
     }
@@ -111,6 +164,9 @@ pub struct Node {
     /// Fields and methods of a class or trait, in display order.
     #[serde(default)]
     pub members: Vec<Member>,
+    /// Key type of a dictionary collection.
+    #[serde(default)]
+    pub key: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +320,8 @@ impl Node {
                 ShapeKind::Text => "Text".into(),
                 ShapeKind::Class => "ClassName".into(),
                 ShapeKind::Trait => "TraitName".into(),
+                ShapeKind::File => "file.txt".into(),
+                k if k.is_collection() => "T".into(),
                 _ => String::new(),
             },
             fill: if is_text { NONE } else { WHITE },
@@ -272,7 +330,15 @@ impl Node {
             text_color: BLACK,
             font_size: 12.0,
             members: Vec::new(),
+            key: if kind == ShapeKind::Dictionary { "K".into() } else { String::new() },
         }
+    }
+
+    /// For a collection: the front card of its "stacked cards" shape.
+    pub fn collection_front(&self) -> Rect {
+        let r = self.rect();
+        let off = collection_offset(r.width(), r.height());
+        Rect::from_min_max(pos2(r.left(), r.top() + off), pos2(r.right() - off, r.bottom()))
     }
 
     pub fn rect(&self) -> Rect {
@@ -288,6 +354,12 @@ impl Node {
     /// object's header, otherwise the whole shape.
     pub fn text_rect(&self) -> Rect {
         let r = self.rect();
+        if self.kind.is_collection() {
+            // Below the stereotype on the front card.
+            let front = self.collection_front();
+            let top = (front.top() + self.font_size * 1.3).min(front.bottom());
+            return Rect::from_min_max(pos2(front.left(), top), front.max);
+        }
         if !self.kind.is_object() {
             return r;
         }
@@ -357,6 +429,10 @@ pub fn outline(kind: ShapeKind, r: Rect) -> Option<Vec<Pos2>> {
             p(0.0, 0.5),
         ],
         ShapeKind::Parallelogram => vec![p(0.2, 0.0), p(1.0, 0.0), p(0.8, 1.0), p(0.0, 1.0)],
+        ShapeKind::File => {
+            let f = file_fold(r.width(), r.height());
+            vec![r.left_top(), pos2(r.right() - f, r.top()), pos2(r.right(), r.top() + f), r.right_bottom(), r.left_bottom()]
+        }
         _ => vec![p(0.0, 0.0), p(1.0, 0.0), p(1.0, 1.0), p(0.0, 1.0)],
     })
 }
@@ -742,6 +818,10 @@ impl Diagram {
                 let kind = match n.kind {
                     ShapeKind::Class => "a class",
                     ShapeKind::Trait => "a trait",
+                    ShapeKind::File => "a file",
+                    k if k.is_collection() => {
+                        return format!("The {} of {}", k.name().to_lowercase(), self.display_text(n));
+                    }
                     _ => "a shape",
                 };
                 format!("\"{}\" is {kind}", n.text)
@@ -750,15 +830,76 @@ impl Diagram {
         }
     }
 
+    /// The pointer that gives a collection its element type, ignoring line `exclude`.
+    pub fn element_pointer(&self, collection: Id, exclude: Option<Id>) -> Option<&Edge> {
+        self.edges
+            .iter()
+            .find(|e| e.pointer.is_some() && e.from == End::Node(collection) && Some(e.id) != exclude)
+    }
+
+    /// Text shown inside a shape: its name, or for a collection its element type
+    /// (`key -> value` for a dictionary).
+    pub fn display_text(&self, n: &Node) -> String {
+        if !n.kind.is_collection() {
+            return n.text.clone();
+        }
+        let or_q = |s: &str| if s.trim().is_empty() { "?".to_owned() } else { s.trim().to_owned() };
+        let element = self
+            .element_pointer(n.id, None)
+            .and_then(|e| e.to.node())
+            .and_then(|id| self.node(id))
+            .map(|t| t.text.clone())
+            .unwrap_or_else(|| or_q(&n.text));
+        if n.kind == ShapeKind::Dictionary {
+            format!("{} \u{2192} {}", or_q(&n.key), element)
+        } else {
+            element
+        }
+    }
+
     /// Explanation for the user when a line of this kind may not connect `from` to `to`
     /// (`None` if it may).
+    #[cfg(test)]
     pub fn link_error(&self, kind: LinkKind, from: End, to: End) -> Option<String> {
-        if self.link_allowed(kind, from, to) {
+        self.link_error_for(None, kind, from, to)
+    }
+
+    /// Like `link_error`, for existing line `edge` (which is not counted against itself).
+    pub fn link_error_for(&self, edge: Option<Id>, kind: LinkKind, from: End, to: End) -> Option<String> {
+        if self.link_allowed_for(edge, kind, from, to) {
             return None;
         }
         use ShapeKind::{Class, Trait};
         let (fk, tk) = (self.node_kind(from), self.node_kind(to));
+        let collection_from = fk.is_some_and(|k| k.is_collection());
         let (reason, rule) = match kind {
+            LinkKind::Pointer(_) if collection_from && fk != Some(ShapeKind::File) && tk != Some(ShapeKind::File) => {
+                let c = from.node().unwrap();
+                let reason = if from == to {
+                    format!("{} cannot contain itself.", self.describe(from))
+                } else {
+                    let other = self
+                        .element_pointer(c, edge)
+                        .and_then(|e| e.to.node())
+                        .and_then(|id| self.node(id))
+                        .map_or_else(|| "another object".to_owned(), |n| format!("\"{}\"", n.text));
+                    format!("{} already has an element pointer, to {other}.", self.describe(from))
+                };
+                (
+                    reason,
+                    "A pointer leaving a collection says what its elements are, so a collection has \
+                     exactly one. For pairs or several types, use a dictionary or a class as the element.",
+                )
+            }
+            LinkKind::Pointer(_) => (
+                format!(
+                    "{}. A file is not a value in the program's memory, so nothing can point to it \
+                     and it cannot point to anything.",
+                    self.describe(if fk == Some(ShapeKind::File) { from } else { to })
+                ),
+                "Use \"Related\" to show that an object reads or writes a file. A handle to an open \
+                 file is a field of the object (e.g. std::fstream, std::fs::File).",
+            ),
             LinkKind::Relation(RelationKind::Implements) => (
                 match (fk, tk) {
                     (Some(Trait), Some(Class)) => {
@@ -795,13 +936,17 @@ impl Diagram {
                 format!("{}. An object can't be related to itself.", self.describe(from)),
                 "\"Related\" connects two different objects.",
             ),
-            _ => ("This connection is not allowed.".to_owned(), ""),
         };
         Some(format!("{reason}\n\n{rule}").trim_end().to_owned())
     }
 
     /// Whether a line of this kind may connect `from` to `to`.
     pub fn link_allowed(&self, kind: LinkKind, from: End, to: End) -> bool {
+        self.link_allowed_for(None, kind, from, to)
+    }
+
+    /// Like `link_allowed`, for existing line `edge` (which is not counted against itself).
+    pub fn link_allowed_for(&self, edge: Option<Id>, kind: LinkKind, from: End, to: End) -> bool {
         match kind {
             LinkKind::Relation(RelationKind::Implements) => {
                 self.node_kind(from) == Some(ShapeKind::Class) && self.node_kind(to) == Some(ShapeKind::Trait)
@@ -811,7 +956,16 @@ impl Diagram {
                 from != to && fk.is_some_and(|k| k.is_object()) && fk == tk
             }
             LinkKind::Relation(RelationKind::Related) => from.node().is_none() || from != to,
-            _ => true,
+            LinkKind::Pointer(_) => {
+                let no_file =
+                    self.node_kind(from) != Some(ShapeKind::File) && self.node_kind(to) != Some(ShapeKind::File);
+                // A pointer leaving a collection is its element type: one per collection, not itself.
+                let element_ok = match from.node().filter(|_| self.node_kind(from).is_some_and(|k| k.is_collection())) {
+                    Some(c) => from != to && self.element_pointer(c, edge).is_none(),
+                    None => true,
+                };
+                no_file && element_ok
+            }
         }
     }
 
@@ -1548,5 +1702,109 @@ mod member_tests {
         assert!(!old.contains("members"));
         let back: Node = serde_json::from_str(&old).unwrap();
         assert!(back.members.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+
+    #[test]
+    fn files_take_related_only() {
+        let mut d = Diagram::default();
+        let c = End::Node(d.add_node(ShapeKind::Class, pos2(0.0, 0.0)));
+        let t = End::Node(d.add_node(ShapeKind::Trait, pos2(300.0, 0.0)));
+        let f = End::Node(d.add_node(ShapeKind::File, pos2(0.0, 300.0)));
+        let f2 = End::Node(d.add_node(ShapeKind::File, pos2(300.0, 300.0)));
+
+        let related = LinkKind::Relation(RelationKind::Related);
+        assert!(d.link_allowed(related, c, f) && d.link_allowed(related, f, f2));
+
+        for k in PointerKind::ALL {
+            let p = LinkKind::Pointer(k);
+            assert!(!d.link_allowed(p, c, f) && !d.link_allowed(p, f, c) && !d.link_allowed(p, f, f));
+            assert!(d.link_allowed(p, c, t));
+        }
+        let msg = d.link_error(LinkKind::Pointer(PointerKind::Unique), c, f).unwrap();
+        assert!(msg.contains("\"file.txt\" is a file") && msg.contains("Related"), "{msg}");
+
+        assert!(!d.link_allowed(LinkKind::Relation(RelationKind::Implements), f, t));
+        assert!(!d.link_allowed(LinkKind::Relation(RelationKind::Inherits), f, f2));
+        assert!(d.link_error(LinkKind::Relation(RelationKind::Inherits), f, f2).unwrap().contains("Only classes and traits"));
+    }
+
+    #[test]
+    fn file_shape_is_a_named_non_type_with_folded_corner() {
+        let n = Node::new(1, ShapeKind::File, pos2(0.0, 0.0));
+        assert_eq!(n.text, "file.txt");
+        assert!(n.kind.is_named() && !n.kind.is_object());
+        assert_eq!(n.text_rect(), n.rect(), "name is centered in the whole shape");
+        let pts = outline(ShapeKind::File, n.rect()).unwrap();
+        assert_eq!(pts.len(), 5, "rectangle with one corner cut off");
+        // Lines attach to the cut corner, not the bounding box corner.
+        let corner = n.boundary_point(n.rect().right_top() + vec2(100.0, -100.0));
+        assert!(n.rect().contains(corner) && corner.distance(n.rect().right_top()) > 1.0);
+    }
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+
+    const UNIQUE: LinkKind = LinkKind::Pointer(PointerKind::Unique);
+
+    #[test]
+    fn element_type_comes_from_pointer_or_text() {
+        let mut d = Diagram::default();
+        let v = d.add_node(ShapeKind::Vector, pos2(0.0, 0.0));
+        let tex = d.add_node(ShapeKind::Class, pos2(300.0, 0.0));
+        d.node_mut(tex).unwrap().text = "Texture".into();
+        assert_eq!(d.display_text(d.node(v).unwrap()), "T", "text until a pointer exists");
+
+        d.add_link(End::Node(v), End::Node(tex), UNIQUE, false);
+        assert_eq!(d.display_text(d.node(v).unwrap()), "Texture");
+
+        let m = d.add_node(ShapeKind::Dictionary, pos2(0.0, 300.0));
+        d.node_mut(m).unwrap().key = "String".into();
+        d.add_link(End::Node(m), End::Node(tex), LinkKind::Pointer(PointerKind::Shared), false);
+        assert_eq!(d.display_text(d.node(m).unwrap()), "String \u{2192} Texture");
+    }
+
+    #[test]
+    fn collection_has_one_element_pointer_and_cannot_contain_itself() {
+        let mut d = Diagram::default();
+        let v = End::Node(d.add_node(ShapeKind::Vector, pos2(0.0, 0.0)));
+        let a = End::Node(d.add_node(ShapeKind::Class, pos2(300.0, 0.0)));
+        let b = End::Node(d.add_node(ShapeKind::Class, pos2(300.0, 300.0)));
+        let owner = End::Node(d.add_node(ShapeKind::Class, pos2(-300.0, 0.0)));
+
+        assert!(d.link_allowed(UNIQUE, v, a));
+        let first = d.add_link(v, a, UNIQUE, false);
+        assert!(!d.link_allowed(UNIQUE, v, b), "second element pointer");
+        assert!(d.link_error(UNIQUE, v, b).unwrap().contains("already has an element pointer"));
+        // The existing element pointer may be moved to another target.
+        assert!(d.link_allowed_for(Some(first), UNIQUE, v, b));
+
+        assert!(!d.link_allowed_for(Some(first), UNIQUE, v, v));
+        assert!(d.link_error_for(Some(first), UNIQUE, v, v).unwrap().contains("cannot contain itself"));
+
+        // Owners point to collections freely; collections may hold collections.
+        assert!(d.link_allowed(UNIQUE, owner, v));
+        let inner = End::Node(d.add_node(ShapeKind::Set, pos2(0.0, 300.0)));
+        assert!(d.link_allowed(UNIQUE, inner, v));
+
+        // No inheritance or implements with collections.
+        assert!(!d.link_allowed(LinkKind::Relation(RelationKind::Inherits), v, inner));
+    }
+
+    #[test]
+    fn collection_shape_and_serialization() {
+        let n = Node::new(1, ShapeKind::Dictionary, pos2(0.0, 0.0));
+        assert_eq!((n.text.as_str(), n.key.as_str()), ("T", "K"));
+        assert!(n.kind.is_collection() && !n.kind.is_object() && n.kind.stereotype().is_some());
+        let (front, t) = (n.collection_front(), n.text_rect());
+        assert!(n.rect().contains_rect(front) && front.contains_rect(t) && t.top() > front.top());
+        let back: Node = serde_json::from_str(&serde_json::to_string(&n).unwrap()).unwrap();
+        assert_eq!(back, n);
     }
 }

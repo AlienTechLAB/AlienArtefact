@@ -61,6 +61,26 @@ pub fn paint_shape(
             painter.add(Shape::line(path, stroke));
             painter.add(Shape::ellipse_stroke(top, vec2(rx, ry), stroke));
         }
+        k if k.is_collection() => {
+            // Two stacked cards ("many"), stereotype at the top of the front card.
+            let off = crate::model::collection_offset(r.width() / zoom, r.height() / zoom) * zoom;
+            let back = Rect::from_min_max(pos2(r.left() + off, r.top()), pos2(r.right(), r.bottom() - off));
+            let front = Rect::from_min_max(pos2(r.left(), r.top() + off), pos2(r.right() - off, r.bottom()));
+            painter.rect(back, 2.0, fill, stroke, StrokeKind::Middle);
+            painter.rect(front, 2.0, fill, stroke, StrokeKind::Middle);
+            if let Some(stereotype) = kind.stereotype().filter(|_| font_px * 0.85 >= 5.0) {
+                let band = Rect::from_min_size(front.min, vec2(front.width(), stereotype_height(font_px, front.height())));
+                paint_text(painter, band, stereotype, font_px * 0.85, stroke.color);
+            }
+        }
+        ShapeKind::File => {
+            if let Some(pts) = outline(kind, r) {
+                painter.add(Shape::convex_polygon(pts, fill, stroke));
+            }
+            let f = crate::model::file_fold(r.width(), r.height());
+            let fold = vec![pos2(r.right() - f, r.top()), pos2(r.right() - f, r.top() + f), pos2(r.right(), r.top() + f)];
+            painter.add(Shape::line(fold, stroke));
+        }
         _ => {
             if let Some(pts) = outline(kind, r) {
                 painter.add(Shape::convex_polygon(pts, fill, stroke));

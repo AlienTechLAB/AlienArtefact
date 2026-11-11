@@ -5,6 +5,8 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 ## Features
 
 - Objects: class/struct, and trait/interface (Rust trait, C# interface, C++ pure virtual class) shown with a `«trait»` stereotype above the name. Names are edited in the right panel or by double-clicking
+- File object: a document shape (folded corner) for config/data/asset/log files; connected to types with Related only (no pointers, no members)
+- Collections: set, vector, dictionary, tree, queue (stacked-cards shape with a «kind» stereotype). The element type comes from the collection's one outgoing pointer, or from text for outside types; dictionaries also have a key type
 - Shapes: rectangle, rounded rectangle, ellipse, diamond, triangle, hexagon, parallelogram, cylinder, text
 - Select (click, Shift+click, rubber band), move with grid snapping, resize via handles
 - Pointers (palette section): drag from the owner to the pointed-to object. Each kind has a fixed look:

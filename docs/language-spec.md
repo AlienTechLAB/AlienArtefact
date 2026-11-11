@@ -46,7 +46,7 @@ A diagram is a set of **objects** and a set of **links**. A link is either a **p
 
 | Element | Kinds |
 |---|---|
-| Object | Class, Trait |
+| Object | Class, Trait, File, Collection (Set, Vector, Dictionary, Tree, Queue) |
 | Pointer | Raw, Reference, Unique, Shared, Weak |
 | Relation | Related, Implements, Inheritance |
 
@@ -54,7 +54,7 @@ Nothing else is part of the language. Free-standing shapes, text and untyped lin
 
 ## 3. Objects
 
-An object is a named type. It is drawn as a rectangle with a **header compartment** containing the name, and a **body** below it.
+An object is a named element of the program's world. **Classes** and **traits** are *types*: each is drawn as a rectangle with a **header compartment** containing the name and a **body** below it. A **file** is not a type but something the program works with outside memory (section 3.5). A **collection** is a container type whose elements are of another type (section 3.6).
 
 ### 3.1 Class
 
@@ -99,7 +99,7 @@ A **trait** is an interface: a set of behaviors that classes promise to provide.
 |---|---|
 | **O1** | Every object MUST have a non-empty name. |
 | **O2** | Object names MUST be unique within a diagram. |
-| **O3** | An object name MUST be a valid type identifier in the target language: a letter or `_`, followed by letters, digits or `_`. |
+| **O3** | The name of a class or trait MUST be a valid type identifier in the target language: a letter or `_`, followed by letters, digits or `_`. (File names follow `F1` instead.) |
 | **O4** | An object's body holds its members (section 3.4). A class without members has an empty body. |
 
 ### 3.4 Members
@@ -144,6 +144,79 @@ Static members are **underlined**. A class shows two compartments below its name
 | **M9** | A class that **implements** a trait MUST provide every method of that trait, with the same name, parameters and return type. A class that inherits from a class that implements the trait gets them through inheritance (`R7`). |
 | **M10** | A derived type MAY access the **protected** members of its base types. No other type may. |
 
+### 3.5 File
+
+A **file** is something the program reads or writes outside its memory: a configuration file, a data file, an asset, a log. It is not a type and has no values in memory, so it is not translated into code by itself. It exists so a blueprint can show *which* types depend on *which* files.
+
+```
++----------------------+\
+|                      | \     <- folded corner
+|                      +--+
+|     settings.toml       |
+|                         |
++-------------------------+
+```
+
+- **Notation:** a rectangle with a folded top-right corner, with the file name in the middle.
+- **Name:** the file's name or path, e.g. `settings.toml`, `assets/shaders/basic.wgsl`, `logs/app.log`.
+- **Connections:** a file is connected to types only by **Related**. The label says what the type does with the file: "reads", "writes", "loaded into", "saved from".
+
+#### File rules
+
+| Rule | Statement |
+|---|---|
+| **F1** | A file MUST have a non-empty name: a file name or a path. It need not be an identifier. |
+| **F2** | File names MUST be unique within a diagram. Use a path to tell apart files with the same name. |
+| **F3** | A file MUST NOT have members. |
+| **F4** | A pointer MUST NOT start or end at a file. A file is not a value in memory. A type that keeps a file open has a **field** holding the handle (e.g. `std::fstream`, `std::fs::File`, `FileStream`) and a Related line to the file. |
+| **F5** | A file MUST NOT take part in **Implements** or **Inheritance**. |
+| **F6** | A Related line to a file SHOULD have a label stating what the type does with it ("reads", "writes", "loaded into"). |
+
+### 3.6 Collections
+
+A **collection** is a container type that holds any number of **elements** of one element type. There are five kinds:
+
+| Kind | Meaning | Order | Duplicates | Access |
+|---|---|---|---|---|
+| **Set** | A group of distinct elements | none | not allowed | by membership test |
+| **Vector** | A sequence | insertion order, indexable | allowed | by index |
+| **Dictionary** | Maps each **key** to one **value** | none | keys distinct | by key |
+| **Tree** | A hierarchy: each element has an ordered list of child elements | parent before children | allowed | by walking from the root |
+| **Queue** | A waiting line | first in, first out | allowed | front (remove) and back (add) |
+
+**Notation:** two stacked cards (meaning "many"), with the kind as a stereotype (`«set»`, `«vector»`, `«dictionary»`, `«tree»`, `«queue»`) and the element type below it. A dictionary shows `Key → Value`.
+
+```
+  +-----------------------+
++-----------------------+ |
+|       «vector»        | |
+|                       | |
+|        Texture        |-+
++-----------------------+
+```
+
+**Element type.** A collection's element type, which for a dictionary is its value type, comes from exactly one of:
+
+- **an element pointer:** a pointer that starts at the collection and ends at an object of the diagram. Its kind says how each element refers to that object. Each element can be owned (Unique), shared (Shared), observed (Weak), borrowed (Reference) or addressed (Raw).
+- **element text:** the name of a type outside the diagram, such as `i32` or `String`, when the collection has no element pointer.
+
+A dictionary's **key type** is always given as text.
+
+**Holding a collection.** An object holds a collection through a pointer from the object to the collection, and the pointer's label is the member name. A **Unique** pointer to a collection means the owner contains the collection directly, as a value member (section 6.4). Other pointer kinds keep their usual meaning: a Shared pointer to a collection shares the whole collection, and so on.
+
+#### Collection rules
+
+| Rule | Statement |
+|---|---|
+| **C1** | A collection MUST have at most one element pointer (one pointer starting at it). |
+| **C2** | A collection MUST NOT be its own element: no self-pointer on a collection. |
+| **C3** | A collection MUST have an element type: an element pointer, or non-empty element text. If it has an element pointer, the element text is ignored. |
+| **C4** | A dictionary MUST have a key type. Key types SHOULD be types that can be compared for equality and hashed (numbers, strings, identifiers). |
+| **C5** | An element pointer has no label. Its elements are not named members. (Exception to `P3`.) |
+| **C6** | A collection MUST NOT have members, and MUST NOT take part in **Implements** or **Inheritance**. |
+| **C7** | A collection MAY be the element of another collection: a vector of sets, a dictionary of vectors. |
+| **C8** | Element pointers to a **trait** hold polymorphic elements and MUST use a pointer kind, never values (`Vec<Box<dyn T>>`, not `Vec<dyn T>`). |
+
 ## 4. Pointers
 
 A **pointer** is a directed link from an **owner** object (source) to a **pointee** object (target). It means: *the owner type has a member through which it reaches a value of the pointee type.* Each pointer is exactly one member.
@@ -187,7 +260,7 @@ A pointer whose owner and pointee are the same object is a **self-pointer**. It 
 |---|---|
 | **P1** | Every pointer MUST have exactly one of the five kinds. |
 | **P2** | Both ends of a pointer MUST be attached to objects. A pointer with a free end is incomplete and not a valid blueprint. |
-| **P3** | Every pointer MUST have a label (its member name). |
+| **P3** | Every pointer MUST have a label (its member name), except a collection's element pointer (`C5`). |
 | **P4** | Labels of the pointers leaving one owner MUST be unique, because they are members of the same type. |
 | **P5** | A pointer MAY have the same object as owner and pointee (section 4.5). |
 | **P6** | A **Unique** or **Shared** self-pointer MUST be nullable in the generated code, for example `Option<Box<T>>`. Otherwise the type would be infinite. |
@@ -252,6 +325,8 @@ This section is normative for code generators and a guide for programmers. Place
 |---|---|---|---|
 | Class `A` | `class A { ... };` | `struct A { ... }` | `class A { ... }` |
 | Trait `T` | `class T { public: virtual ~T() = default; /* pure virtual methods */ };` | `trait T { ... }` | `interface T { ... }` |
+| File | – (no code; documents which types use the file) | – | – |
+| Collection | see section 6.4 | see section 6.4 | see section 6.4 |
 
 Members translate as follows:
 
@@ -304,6 +379,37 @@ Further rules for generated code:
 
 **Multiple inheritance (`R8`)** translates directly only to C++. For Rust and C#, a blueprint with multiple class inheritance MUST be rewritten so that at most one base is a class and the others are traits.
 
+### 6.4 Collections
+
+A collection becomes the container type below, with `E` the **element type** and `K` the key type:
+
+| Kind | C++ | Rust | C# |
+|---|---|---|---|
+| Set | `std::unordered_set<E>` | `HashSet<E>` | `HashSet<E>` |
+| Vector | `std::vector<E>` | `Vec<E>` | `List<E>` |
+| Dictionary | `std::unordered_map<K, E>` | `HashMap<K, E>` | `Dictionary<K, E>` |
+| Tree | `Tree<E>` (no standard type; see below) | `Tree<E>` (see below) | `Tree<E>` (see below) |
+| Queue | `std::queue<E>` (or `std::deque<E>`) | `VecDeque<E>` | `Queue<E>` |
+
+**Element type `E`:**
+
+- From element text: the text as written. A vector with element text `i32` becomes `Vec<i32>` / `std::vector<i32>`.
+- From an element pointer to object `B`: the pointer member type from section 6.2, with two refinements for elements:
+  - **Unique** to a class means the elements are owned values: `std::vector<B>`, `Vec<B>`. To a trait it means boxed values: `std::vector<std::unique_ptr<T>>`, `Vec<Box<dyn T>>` (`C8`).
+  - **Reference** elements are not allowed in C++ containers. A C++ generator MUST use `std::reference_wrapper<const B>` or `B*` instead.
+
+**Holding a collection:** a **Unique** pointer from owner `A` to a collection, labeled `m`, becomes a value member: `std::vector<E> m;` in C++, `m: Vec<E>` in Rust, and in C# a field `List<E> m` initialized in the constructor. Other pointer kinds wrap the container type as in section 6.2, e.g. Shared becomes `Rc<RefCell<Vec<E>>>`.
+
+**Tree.** No target language has a standard general tree, so a generator MUST emit one node type per tree element type:
+
+```rust
+struct Tree<E> { value: E, children: Vec<Tree<E>> }
+```
+
+```cpp
+template <class E> struct Tree { E value; std::vector<Tree<E>> children; };
+```
+
 ## 7. Worked example
 
 A diagram containing:
@@ -311,7 +417,7 @@ A diagram containing:
 - class `Application`, with a Unique pointer `m_renderer` to trait `Renderer`, and a const Reference `m_config` to class `Config`,
 - class `VulkanRenderer` Implements `Renderer`,
 - classes `Dog` and `Cat`, each with an Inheritance relation to class `Animal`,
-- class `Settings`, Related to class `SettingsFile` with the label "loaded into",
+- file `settings.toml`, Related to class `Settings` with the label "loaded into",
 - class `Node`, with a Unique self-pointer `next`.
 
 translates to Rust as:
@@ -339,8 +445,7 @@ struct Node {
     next: Option<Box<Node>>,       // Unique self-pointer, nullable (P6)
 }
 
-struct SettingsFile {}             // Related to Settings: no code
-struct Settings {}
+struct Settings {}                 // loaded from settings.toml (Related: no code)
 ```
 
 and to C++ as:
@@ -364,8 +469,7 @@ class Node {
     std::unique_ptr<Node> next;            // Unique self-pointer
 };
 
-class SettingsFile {};                     // Related to Settings: no code
-class Settings {};
+class Settings {};                         // loaded from settings.toml (Related: no code)
 ```
 
 ## 8. Rule index
@@ -377,7 +481,7 @@ class Settings {};
 | D1 | Only objects, pointers and relations carry meaning; any other drawing element is invalid. | partly (no other elements can be created) |
 | O1 | Object has a non-empty name | no |
 | O2 | Object names are unique | no |
-| O3 | Object name is a valid identifier | no |
+| O3 | Class/trait name is a valid identifier | no |
 | O4 | Body holds members | – |
 | M1 | Member has a valid identifier name | no |
 | M2 | Field names unique per object | no |
@@ -389,6 +493,20 @@ class Settings {};
 | M8 | Pointers to diagram objects drawn as pointers, not fields | no |
 | M9 | Implementing class provides every trait method | no |
 | M10 | Protected members visible to derived types only | – (code generation) |
+| F1 | File has a non-empty name or path | no |
+| F2 | File names unique | no |
+| F3 | Files have no members | yes |
+| F4 | No pointers to or from files | yes |
+| F5 | Files take no part in Implements or Inheritance | yes |
+| F6 | Related lines to files are labeled | no |
+| C1 | At most one element pointer per collection | yes |
+| C2 | A collection is not its own element | yes |
+| C3 | A collection has an element type | no |
+| C4 | A dictionary has a key type | no |
+| C5 | Element pointers have no label | – |
+| C6 | Collections have no members, no Implements/Inheritance | yes |
+| C7 | Collections may contain collections | yes |
+| C8 | Trait elements use a pointer kind | – (code generation) |
 | P1 | Pointer has exactly one kind | yes |
 | P2 | Pointer ends are attached to objects | no (free ends are allowed while drawing) |
 | P3 | Pointer has a label | no |
@@ -413,8 +531,8 @@ class Settings {};
 ## 9. Open questions (planned for later versions)
 
 - **Method details.** Whether a method changes its object (`&mut self` vs `&self`, C++ `const` methods), default implementations in traits, and `virtual`/`override` for class methods.
-- **Collections.** Multiplicity on pointers, such as `Vec<Box<B>>` or `std::vector<std::unique_ptr<B>>`.
+- **Ordered sets and dictionaries** (`BTreeSet`, `std::map`) as opposed to hashed ones.
+- **Object keys** for dictionaries (a key that is an object of the diagram).
 - **Value members.** A member held by value rather than through a pointer (composition without indirection).
-- **Non-code artifacts.** A dedicated element for files and other resources, for example the config file in the Related example.
 - **Enums and generic types.**
 - **Mutability of the pointer itself**, as opposed to the pointee (`T* const`).

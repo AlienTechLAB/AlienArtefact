@@ -607,6 +607,8 @@ impl App {
         ui.add_space(4.0);
         self.palette_section(ui, "Objects", &ShapeKind::OBJECTS);
         ui.add_space(8.0);
+        self.palette_section(ui, "Collections", &ShapeKind::COLLECTIONS);
+        ui.add_space(8.0);
         self.pointer_palette(ui);
         ui.add_space(8.0);
         self.relation_palette(ui);
@@ -700,6 +702,12 @@ impl App {
                 paint_shape(ui.painter(), kind, icon, Color32::WHITE, Stroke::new(1.2, stroke_col), scale, 12.0 * scale);
                 let caption = match kind {
                     ShapeKind::Trait => "trait",
+                    ShapeKind::File => "file",
+                    ShapeKind::Set => "set",
+                    ShapeKind::Vector => "vector",
+                    ShapeKind::Dictionary => "dict",
+                    ShapeKind::Tree => "tree",
+                    ShapeKind::Queue => "queue",
                     _ => "class",
                 };
                 ui.painter().text(
@@ -787,17 +795,63 @@ impl App {
     fn node_format(&mut self, ui: &mut Ui, ids: &[Id]) {
         let before = self.diagram.node(ids[0]).unwrap().clone();
         let mut n = before.clone();
-        let single_class = ids.len() == 1 && n.kind.is_object();
+        let single_class = ids.len() == 1 && n.kind.is_named();
+        let single_collection = ids.len() == 1 && n.kind.is_collection();
+        // Element type set by the collection's pointer, if it has one.
+        let element_from = self
+            .diagram
+            .element_pointer(n.id, None)
+            .filter(|_| single_collection)
+            .and_then(|e| e.to.node())
+            .and_then(|id| self.diagram.node(id))
+            .map(|t| t.text.clone());
 
-        if single_class {
-            ui.strong(if n.kind == ShapeKind::Trait { "Trait" } else { "Class" });
+        if single_collection {
+            ui.strong("Collection");
+            ui.separator();
+            egui::Grid::new("collection_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                ui.label("Kind");
+                egui::ComboBox::from_id_salt("collection_kind").selected_text(n.kind.name()).show_ui(ui, |ui| {
+                    for k in ShapeKind::COLLECTIONS {
+                        ui.selectable_value(&mut n.kind, k, k.name());
+                    }
+                });
+                ui.end_row();
+                if n.kind == ShapeKind::Dictionary {
+                    ui.label("Key");
+                    ui.add(egui::TextEdit::singleline(&mut n.key).hint_text("e.g. String").desired_width(f32::INFINITY));
+                    ui.end_row();
+                }
+                ui.label(if n.kind == ShapeKind::Dictionary { "Value" } else { "Element" });
+                match &element_from {
+                    Some(target) => {
+                        ui.label(format!("{target}  (from its pointer)"));
+                    }
+                    None => {
+                        ui.add(egui::TextEdit::singleline(&mut n.text).hint_text("e.g. i32").desired_width(f32::INFINITY));
+                    }
+                }
+                ui.end_row();
+            });
+            ui.add_space(4.0);
+            ui.weak("Draw a pointer from the collection to an object to make that object the element type.");
+            ui.add_space(12.0);
+            ui.strong("Style");
+        } else if single_class {
+            ui.strong(match n.kind {
+                ShapeKind::Trait => "Trait",
+                ShapeKind::File => "File",
+                _ => "Class",
+            });
             ui.separator();
             egui::Grid::new("class_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                 ui.label("Name");
                 ui.add(egui::TextEdit::singleline(&mut n.text).desired_width(f32::INFINITY));
                 ui.end_row();
             });
-            members_ui(ui, &mut n);
+            if n.kind.is_object() {
+                members_ui(ui, &mut n);
+            }
             ui.add_space(12.0);
             ui.strong("Style");
         } else {
@@ -823,7 +877,7 @@ impl App {
         });
 
         if ids.len() == 1 {
-            if !single_class {
+            if !single_class && !single_collection {
                 ui.add_space(6.0);
                 ui.label("Text");
                 ui.add(egui::TextEdit::multiline(&mut n.text).desired_rows(2).desired_width(f32::INFINITY));
@@ -847,8 +901,21 @@ impl App {
             return;
         }
         if ids.len() == 1 {
+            // Grow a collection so its element type stays readable.
+            if n.kind.is_collection() && (n.text != before.text || n.key != before.key || n.kind != before.kind) {
+                let mut probe = n.clone();
+                probe.size = [1.0, 1.0];
+                let text = {
+                    let mut d = self.diagram.clone();
+                    *d.node_mut(n.id).unwrap() = probe;
+                    d.display_text(d.node(n.id).unwrap())
+                };
+                let font = egui::FontId::proportional(n.font_size);
+                let w = ui.painter().layout_no_wrap(text, font, Color32::BLACK).size().x + n.font_size * 3.0;
+                n.size[0] = n.size[0].max(w);
+            }
             // Grow the box so the name and all members stay visible.
-            if n.kind.is_object()
+            if n.kind.is_named()
                 && (n.members != before.members || n.text != before.text || n.font_size != before.font_size)
             {
                 let painter = ui.painter();
@@ -904,6 +971,11 @@ impl App {
                 })
             })
             .collect();
+        // Pointers cannot touch files; one check covers every pointer kind.
+        let pointer_ok = ids.iter().all(|id| {
+            let l = self.diagram.edge(*id).unwrap();
+            self.diagram.link_allowed_for(Some(*id), LinkKind::Pointer(PointerKind::Raw), l.from, l.to)
+        });
         egui::Grid::new("edge_style").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
             ui.label("Type");
             let mut link = e.link();
@@ -911,7 +983,12 @@ impl App {
                 .selected_text(link.map_or("Plain connector", |k| k.name()))
                 .show_ui(ui, |ui| {
                     for k in PointerKind::ALL {
-                        ui.selectable_value(&mut link, Some(LinkKind::Pointer(k)), k.name());
+                        ui.add_enabled_ui(pointer_ok, |ui| {
+                            ui.selectable_value(&mut link, Some(LinkKind::Pointer(k)), k.name())
+                                .on_disabled_hover_text(
+                                    "Not allowed here: a file at either end, or a collection that already has its element pointer",
+                                );
+                        });
                     }
                     ui.separator();
                     for (k, ok) in RelationKind::ALL.into_iter().zip(&relation_ok) {

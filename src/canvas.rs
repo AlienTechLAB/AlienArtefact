@@ -325,11 +325,12 @@ impl App {
                 let new_end = self.end_at(w, exclude);
                 if let Some(kind) = e.link() {
                     let (from, to) = if end == 0 { (new_end, other) } else { (other, new_end) };
-                    if let Some(message) = self.diagram.link_error(kind, from, to) {
+                    if let Some(message) = self.diagram.link_error_for(Some(id), kind, from, to) {
                         // Show the incorrect line where it was dropped until the user closes the
                         // error window; then it is undone (see `App::dismiss_link_error`).
                         let (old_from, old_to) = if end == 0 { (orig, other) } else { (other, orig) };
-                        let restore = self.diagram.link_allowed(kind, old_from, old_to).then_some((end, orig));
+                        let restore =
+                            self.diagram.link_allowed_for(Some(id), kind, old_from, old_to).then_some((end, orig));
                         let e = self.diagram.edge_mut(id).unwrap();
                         if end == 0 { e.from = new_end } else { e.to = new_end }
                         self.link_error = Some(LinkError { id, restore, message });
@@ -454,7 +455,7 @@ impl App {
             paint_shape(painter, n.kind, sr, color(n.fill), stroke, z, n.font_size * z);
             if self.editing != Some(n.id) {
                 let tr = self.rect_to_screen(n.text_rect());
-                paint_text(painter, tr, &n.text, n.font_size * z, color(n.text_color));
+                paint_text(painter, tr, &self.diagram.display_text(n), n.font_size * z, color(n.text_color));
             }
             if n.kind.is_object() {
                 paint_members(painter, n, sr, z, stroke);
@@ -518,7 +519,7 @@ impl App {
                         let (Some(e), Some(o)) = (edge, other_end) else { return true };
                         let Some(kind) = e.link() else { return true };
                         let (from, to) = if *end == 0 { (End::Node(*t), o) } else { (o, End::Node(*t)) };
-                        self.diagram.link_allowed(kind, from, to)
+                        self.diagram.link_allowed_for(Some(e.id), kind, from, to)
                     })
                     .and_then(|t| self.diagram.node(t));
                 if let Some(t) = target {
@@ -550,7 +551,7 @@ impl App {
             let sr = self.rect_to_screen(n.text_rect());
             let h = (n.font_size * z * 1.6).max(20.0);
             let rect = Rect::from_center_size(sr.center(), vec2(sr.width().max(60.0), sr.height().max(h)));
-            (rect, n.font_size * z, n.kind.is_object())
+            (rect, n.font_size * z, n.kind.is_named() || n.kind.is_collection())
         } else if let Some((e, path)) = self.diagram.edge(id).and_then(|e| Some((e, self.diagram.edge_path(e)?))) {
             let sp: Vec<Pos2> = path.iter().map(|p| self.to_screen(*p)).collect();
             let size = vec2(160.0, 28.0);

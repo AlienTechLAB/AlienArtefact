@@ -103,6 +103,23 @@ pub fn export(d: &Diagram) -> String {
                     );
                 }
             }
+            k if k.is_collection() => {
+                let off = crate::model::collection_offset(r.width(), r.height());
+                for (x, y) in [(r.left() + off, r.top()), (r.left(), r.top() + off)] {
+                    let _ = writeln!(
+                        out,
+                        r#"<rect x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}" rx="2" {paint}/>"#,
+                        r.width() - off,
+                        r.height() - off
+                    );
+                }
+                if let Some(stereotype) = k.stereotype() {
+                    let front = n.collection_front();
+                    let band = stereotype_height(n.font_size, front.height());
+                    let center = egui::pos2(front.center().x, front.top() + band / 2.0);
+                    text_block(&mut out, center, stereotype, n.font_size * 0.85, n.stroke);
+                }
+            }
             ShapeKind::Ellipse => {
                 let c = r.center();
                 let _ = writeln!(
@@ -132,14 +149,23 @@ pub fn export(d: &Diagram) -> String {
                 if let Some(pts) = outline(n.kind, r) {
                     let _ = writeln!(out, r#"<polygon points="{}" {paint}/>"#, points(&pts));
                 }
+                if n.kind == ShapeKind::File {
+                    let f = crate::model::file_fold(r.width(), r.height());
+                    let fold = [
+                        egui::pos2(r.right() - f, r.top()),
+                        egui::pos2(r.right() - f, r.top() + f),
+                        egui::pos2(r.right(), r.top() + f),
+                    ];
+                    let _ = writeln!(out, r#"<polyline points="{}" fill="none" {paint}/>"#, points(&fold));
+                }
             }
         }
-        if let Some(stereotype) = n.kind.stereotype() {
+        if let Some(stereotype) = n.kind.stereotype().filter(|_| n.kind.is_object()) {
             let band = stereotype_height(n.font_size, r.height());
             let center = egui::pos2(r.center().x, r.top() + band / 2.0);
             text_block(&mut out, center, stereotype, n.font_size * 0.85, n.stroke);
         }
-        text_block(&mut out, n.text_rect().center(), &n.text, n.font_size, n.text_color);
+        text_block(&mut out, n.text_rect().center(), &d.display_text(n), n.font_size, n.text_color);
         if n.kind.is_object() {
             let layout = n.body_layout();
             for y in &layout.separators {
