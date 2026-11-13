@@ -11,7 +11,7 @@ use crate::app::App;
 use crate::model::{color, label_center, End, Id, LinkKind, ShapeKind};
 use crate::render::{
     canvas_color, grid_color, head_len, layout_centered, paint_badge, paint_edge, paint_members, paint_shape,
-    paint_text, tone_fill, tone_frame, tone_ink, Deco,
+    paint_text, tone_fill, tone_frame, tone_ink, tone_line, glow_layers, NEON_CYAN, NEON_VIOLET, Deco,
 };
 
 pub const GRID: f32 = 10.0;
@@ -476,10 +476,20 @@ impl App {
             self.diagram.nodes.iter().partition(|n| n.kind == ShapeKind::Package);
         for n in packages.into_iter().chain(objects) {
             let sr = self.rect_to_screen(n.rect());
-            let stroke = Stroke::new(n.stroke_width * z, tone_ink(color(n.stroke)));
+            // Packages are frames: violet in the dark theme, the objects cyan.
+            let neon = if n.kind == ShapeKind::Package { NEON_VIOLET } else { NEON_CYAN };
+            let line = tone_line(color(n.stroke), neon);
+            let stroke = Stroke::new(n.stroke_width * z, line);
             let stereotype = n.stereotype_text();
             let deco = Deco { stereotype: stereotype.as_deref(), name: &n.text };
             let fill = if n.kind == ShapeKind::Package { tone_frame(color(n.fill)) } else { tone_fill(color(n.fill)) };
+            // The glow: the outline drawn wide and faint underneath (dark theme only).
+            for (extra, glow) in glow_layers(line) {
+                if glow.a() > 0 {
+                    let wide = Stroke::new(n.stroke_width * z + extra * z.sqrt(), glow);
+                    paint_shape(painter, n.kind, sr, Color32::TRANSPARENT, wide, z, n.font_size * z, Deco::default());
+                }
+            }
             paint_shape(painter, n.kind, sr, fill, stroke, z, n.font_size * z, deco);
             if self.editing != Some(n.id) {
                 let tr = self.rect_to_screen(n.text_rect());
@@ -504,9 +514,16 @@ impl App {
             }
             let (pattern, start, end) = e.look();
             let invalid = self.link_error.as_ref().is_some_and(|err| err.id == e.id);
-            let col = if invalid { ERROR } else { tone_ink(color(e.color)) };
+            // Pointers are cyan, relations violet in the dark theme.
+            let neon = if e.relation.is_some() { NEON_VIOLET } else { NEON_CYAN };
+            let col = if invalid { ERROR } else { tone_line(color(e.color), neon) };
             if invalid {
                 painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + 6.0, ERROR.gamma_multiply(0.25))));
+            }
+            for (extra, glow) in glow_layers(col) {
+                if glow.a() > 0 {
+                    painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + extra * z.sqrt(), glow)));
+                }
             }
             paint_edge(painter, &sp, col, e.width * z, pattern, start, end, z);
             if let Some(badge) = e.badge() {

@@ -39,8 +39,13 @@ fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(f(ar, br), f(ag, bg), f(ab, bb), aa)
 }
 
-const DARK_SURFACE: Color32 = Color32::from_rgb(45, 46, 50);
-const DARK_INK: Color32 = Color32::from_rgb(218, 220, 224);
+// The dark theme is "neon": deep navy surfaces, cyan outlines and violet relations that glow.
+const DARK_SURFACE: Color32 = Color32::from_rgb(16, 23, 50);
+const DARK_INK: Color32 = Color32::from_rgb(214, 228, 255);
+/// Outlines and pointers in the dark theme.
+pub const NEON_CYAN: Color32 = Color32::from_rgb(86, 196, 255);
+/// Relations (and other secondary lines) in the dark theme.
+pub const NEON_VIOLET: Color32 = Color32::from_rgb(178, 132, 255);
 
 /// A fill as shown in the current theme.
 pub fn tone_fill(c: Color32) -> Color32 {
@@ -50,7 +55,7 @@ pub fn tone_fill(c: Color32) -> Color32 {
 /// A package frame's fill: in the dark theme only a step above the canvas, so the objects inside
 /// (`tone_fill`) stand out from it.
 pub fn tone_frame(c: Color32) -> Color32 {
-    if is_dark() && c.a() > 0 && lightness(c) > 0.6 { mix(Color32::from_rgb(36, 37, 41), c, 0.05) } else { c }
+    if is_dark() && c.a() > 0 && lightness(c) > 0.6 { mix(Color32::from_rgb(12, 17, 38), c, 0.05) } else { c }
 }
 
 /// A line or text colour as shown in the current theme.
@@ -58,18 +63,33 @@ pub fn tone_ink(c: Color32) -> Color32 {
     if is_dark() && c.a() > 0 && lightness(c) < 0.35 { mix(DARK_INK, c, 0.15) } else { c }
 }
 
+/// A shape's outline as shown in the current theme: dark lines become neon `glow` lines.
+pub fn tone_line(c: Color32, glow: Color32) -> Color32 {
+    if is_dark() && c.a() > 0 && lightness(c) < 0.35 { mix(glow, c, 0.1) } else { c }
+}
+
+/// The halo drawn under a line of colour `c` in the dark theme (none in the light theme):
+/// (width added to the line, colour), widest first.
+pub fn glow_layers(c: Color32) -> [(f32, Color32); 2] {
+    if is_dark() {
+        [(7.0, c.gamma_multiply(0.07)), (3.5, c.gamma_multiply(0.16))]
+    } else {
+        [(0.0, Color32::TRANSPARENT); 2]
+    }
+}
+
 /// The canvas behind the diagram.
 pub fn canvas_color() -> Color32 {
-    if is_dark() { Color32::from_rgb(30, 31, 34) } else { Color32::WHITE }
+    if is_dark() { Color32::from_rgb(7, 10, 26) } else { Color32::WHITE }
 }
 
 pub fn grid_color() -> Color32 {
-    if is_dark() { Color32::from_rgb(42, 43, 47) } else { Color32::from_gray(235) }
+    if is_dark() { Color32::from_rgb(17, 25, 54) } else { Color32::from_gray(235) }
 }
 
 /// Background of the small pointer badges.
 fn badge_color() -> Color32 {
-    if is_dark() { Color32::from_rgb(50, 52, 57) } else { Color32::from_gray(248) }
+    if is_dark() { Color32::from_rgb(18, 26, 56) } else { Color32::from_gray(248) }
 }
 
 /// Per-object text a shape draws itself: the stereotype line and, for a package tab, the name.
@@ -305,7 +325,10 @@ mod theme_tests {
         assert!(lightness(tone_ink(black)) > 0.7, "black lines and text become light");
         assert_eq!(tone_ink(red), red, "strong colours stay");
         assert_eq!(tone_fill(Color32::TRANSPARENT), Color32::TRANSPARENT);
+        assert!(lightness(tone_line(black, NEON_CYAN)) > 0.5, "outlines become neon");
+        assert!(glow_layers(NEON_CYAN)[0].1.a() > 0, "and glow");
         set_dark(false);
+        assert_eq!(glow_layers(NEON_CYAN)[0].1, Color32::TRANSPARENT, "no glow in the light theme");
         assert_eq!(tone_fill(white), white);
         assert_eq!(tone_ink(black), black);
     }

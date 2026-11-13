@@ -15,6 +15,58 @@ use crate::render::{paint_edge, paint_shape, Deco};
 
 const MAX_UNDO: usize = 200;
 
+/// egui's dark theme recoloured to match the neon canvas: navy panels, blue widgets, cyan
+/// selection.
+fn neon_visuals(v: &mut egui::Visuals) {
+    let rgb = Color32::from_rgb;
+    v.panel_fill = rgb(11, 15, 33);
+    v.window_fill = rgb(15, 20, 42);
+    v.window_stroke = Stroke::new(1.0, rgb(40, 56, 110));
+    v.extreme_bg_color = rgb(6, 9, 22);
+    v.faint_bg_color = rgb(16, 22, 46);
+    v.code_bg_color = rgb(16, 22, 46);
+    v.hyperlink_color = crate::render::NEON_CYAN;
+    v.selection.bg_fill = rgb(28, 92, 170);
+    v.selection.stroke = Stroke::new(1.0, rgb(170, 225, 255));
+    let w = &mut v.widgets;
+    w.noninteractive.bg_fill = rgb(11, 15, 33);
+    w.noninteractive.weak_bg_fill = rgb(11, 15, 33);
+    w.noninteractive.bg_stroke = Stroke::new(1.0, rgb(30, 42, 84));
+    w.inactive.bg_fill = rgb(24, 33, 68);
+    w.inactive.weak_bg_fill = rgb(20, 28, 58);
+    w.hovered.bg_fill = rgb(34, 50, 100);
+    w.hovered.weak_bg_fill = rgb(30, 44, 90);
+    w.hovered.bg_stroke = Stroke::new(1.0, rgb(86, 160, 230));
+    w.active.bg_fill = rgb(40, 62, 128);
+    w.active.weak_bg_fill = rgb(40, 62, 128);
+    w.active.bg_stroke = Stroke::new(1.0, crate::render::NEON_CYAN);
+    w.open.bg_fill = rgb(24, 33, 68);
+    w.open.weak_bg_fill = rgb(24, 33, 68);
+}
+
+/// The diagrams icon: a small flowchart (a box, a decision diamond, two circles and the boxes
+/// below them), about 30 x 28 points around `c`.
+fn flowchart_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| Pos2::new(c.x + x, c.y + y);
+    let line = |a: Pos2, b: Pos2| {
+        painter.line_segment([a, b], stroke);
+    };
+    let none = Color32::TRANSPARENT;
+    // Top box -> diamond -> bottom box.
+    painter.rect_stroke(Rect::from_center_size(p(0.0, -11.0), vec2(11.0, 5.0)), 1.5, stroke, egui::StrokeKind::Middle);
+    line(p(0.0, -8.5), p(0.0, -5.0));
+    painter.add(egui::Shape::convex_polygon(vec![p(0.0, -5.0), p(5.0, 0.0), p(0.0, 5.0), p(-5.0, 0.0)], none, stroke));
+    line(p(0.0, 5.0), p(0.0, 8.5));
+    painter.rect_stroke(Rect::from_center_size(p(0.0, 11.0), vec2(11.0, 5.0)), 1.5, stroke, egui::StrokeKind::Middle);
+    // Diamond -> circles left and right -> small boxes below them.
+    for side in [-1.0, 1.0] {
+        line(p(5.0 * side, 0.0), p(8.0 * side, 0.0));
+        painter.circle_stroke(p(11.0 * side, 0.0), 3.0, stroke);
+        line(p(11.0 * side, 3.0), p(11.0 * side, 7.5));
+        painter.rect_stroke(Rect::from_center_size(p(11.0 * side, 10.5), vec2(5.0, 5.0)), 0.5, stroke, egui::StrokeKind::Middle);
+    }
+}
+
 /// The categories of the palette, one icon each in the activity bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaletteView {
@@ -166,6 +218,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         if self.applied_dark != Some(self.dark) {
             ctx.set_theme(if self.dark { egui::Theme::Dark } else { egui::Theme::Light });
+            ctx.style_mut_of(egui::Theme::Dark, |s| neon_visuals(&mut s.visuals));
             crate::render::set_dark(self.dark);
             self.applied_dark = Some(self.dark);
         }
@@ -725,14 +778,6 @@ impl App {
 
     fn toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            let has_sel = !self.selection.is_empty();
-            if ui.add_enabled(has_sel, egui::Button::new("To front")).clicked() {
-                self.diagram.reorder(&self.selection, true);
-            }
-            if ui.add_enabled(has_sel, egui::Button::new("To back")).clicked() {
-                self.diagram.reorder(&self.selection, false);
-            }
-            ui.separator();
             ui.checkbox(&mut self.dark, "Dark").on_hover_text("Dark theme (also in View)");
         });
     }
@@ -806,7 +851,7 @@ impl App {
     /// The icon strip (VS Code's activity bar). For now one icon: the diagram palette. Clicking
     /// it shows or hides the palette panel.
     fn activity_bar(&mut self, ui: &mut Ui) {
-        const ACCENT: Color32 = Color32::from_rgb(0, 120, 215);
+        let accent = if self.dark { crate::render::NEON_CYAN } else { Color32::from_rgb(0, 120, 215) };
         ui.add_space(6.0);
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
         let shown = self.palette_view.is_some();
@@ -816,11 +861,10 @@ impl App {
             painter.rect_filled(rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill);
         }
         if shown {
-            painter.rect_filled(Rect::from_min_size(rect.min, vec2(2.0, rect.height())), 0.0, ACCENT);
+            painter.rect_filled(Rect::from_min_size(rect.min, vec2(2.0, rect.height())), 0.0, accent);
         }
         let col = if shown || resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
-        let icon = Rect::from_center_size(rect.center(), vec2(26.0, 20.0));
-        paint_shape(painter, ShapeKind::Class, icon, Color32::TRANSPARENT, Stroke::new(1.4, col), 0.5, 4.0, Deco::default());
+        flowchart_icon(painter, rect.center(), Stroke::new(1.3, col));
         if resp.clicked() {
             self.toggle_palette();
         }
