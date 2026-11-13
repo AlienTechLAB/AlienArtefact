@@ -9,7 +9,10 @@ use egui::{
 
 use crate::app::App;
 use crate::model::{color, label_center, End, Id, LinkKind, ShapeKind};
-use crate::render::{head_len, layout_centered, paint_badge, paint_edge, paint_members, paint_shape, paint_text, Deco};
+use crate::render::{
+    canvas_color, grid_color, head_len, layout_centered, paint_badge, paint_edge, paint_members, paint_shape,
+    paint_text, tone_fill, tone_frame, tone_ink, Deco,
+};
 
 pub const GRID: f32 = 10.0;
 const MIN_SIZE: f32 = 10.0;
@@ -440,7 +443,7 @@ impl App {
     fn paint(&self, painter: &Painter, pointer: Option<Pos2>) {
         let rect = self.canvas_rect;
         let z = self.zoom;
-        painter.rect_filled(rect, 0.0, Color32::WHITE);
+        painter.rect_filled(rect, 0.0, canvas_color());
 
         if self.show_grid {
             let mut step = GRID * z;
@@ -448,7 +451,7 @@ impl App {
                 step *= 5.0;
             }
             let origin = rect.min + self.pan;
-            let grid_stroke = Stroke::new(1.0, Color32::from_gray(235));
+            let grid_stroke = Stroke::new(1.0, grid_color());
             let mut x = rect.left() + (origin.x - rect.left()).rem_euclid(step);
             while x < rect.right() {
                 painter.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], grid_stroke);
@@ -466,13 +469,14 @@ impl App {
             self.diagram.nodes.iter().partition(|n| n.kind == ShapeKind::Package);
         for n in packages.into_iter().chain(objects) {
             let sr = self.rect_to_screen(n.rect());
-            let stroke = Stroke::new(n.stroke_width * z, color(n.stroke));
+            let stroke = Stroke::new(n.stroke_width * z, tone_ink(color(n.stroke)));
             let stereotype = n.stereotype_text();
             let deco = Deco { stereotype: stereotype.as_deref(), name: &n.text };
-            paint_shape(painter, n.kind, sr, color(n.fill), stroke, z, n.font_size * z, deco);
+            let fill = if n.kind == ShapeKind::Package { tone_frame(color(n.fill)) } else { tone_fill(color(n.fill)) };
+            paint_shape(painter, n.kind, sr, fill, stroke, z, n.font_size * z, deco);
             if self.editing != Some(n.id) {
                 let tr = self.rect_to_screen(n.text_rect());
-                paint_text(painter, tr, &self.diagram.display_text(n), n.font_size * z, color(n.text_color));
+                paint_text(painter, tr, &self.diagram.display_text(n), n.font_size * z, tone_ink(color(n.text_color)));
             }
             if n.kind.is_object() {
                 paint_members(painter, n, sr, z, stroke);
@@ -487,25 +491,25 @@ impl App {
             }
             let (pattern, start, end) = e.look();
             let invalid = self.link_error.as_ref().is_some_and(|err| err.id == e.id);
-            let col = if invalid { ERROR } else { color(e.color) };
+            let col = if invalid { ERROR } else { tone_ink(color(e.color)) };
             if invalid {
                 painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + 6.0, ERROR.gamma_multiply(0.25))));
             }
             paint_edge(painter, &sp, col, e.width * z, pattern, start, end, z);
             if let Some(badge) = e.badge() {
                 let len = head_len(e.width * z, z);
-                paint_badge(painter, &sp, len, &badge, 10.0 * z, color(e.color));
+                paint_badge(painter, &sp, len, &badge, 10.0 * z, tone_ink(color(e.color)));
             }
             if !e.label.is_empty() && self.editing != Some(e.id) {
-                let galley = layout_centered(painter, &e.label, 11.0 * z, color(e.color), f32::INFINITY);
+                let galley = layout_centered(painter, &e.label, 11.0 * z, tone_ink(color(e.color)), f32::INFINITY);
                 let size = galley.size();
                 let mid = label_center(e.pointer.is_some(), &sp, head_len(e.width * z, z), size + vec2(4.0, 2.0));
-                painter.rect_filled(Rect::from_center_size(mid, size + vec2(4.0, 2.0)), 0.0, Color32::WHITE);
-                painter.galley(pos2(mid.x, mid.y - size.y / 2.0), galley, color(e.color));
+                painter.rect_filled(Rect::from_center_size(mid, size + vec2(4.0, 2.0)), 0.0, canvas_color());
+                painter.galley(pos2(mid.x, mid.y - size.y / 2.0), galley, tone_ink(color(e.color)));
             }
             if self.selection.contains(&e.id) {
                 for p in [sp[0], sp[sp.len() - 1]] {
-                    painter.rect(Rect::from_center_size(p, vec2(7.0, 7.0)), 0.0, Color32::WHITE, Stroke::new(1.0, SEL), StrokeKind::Middle);
+                    painter.rect(Rect::from_center_size(p, vec2(7.0, 7.0)), 0.0, canvas_color(), Stroke::new(1.0, SEL), StrokeKind::Middle);
                 }
             }
         }
@@ -518,7 +522,7 @@ impl App {
             painter.extend(Shape::dashed_line(&corners, Stroke::new(1.0, SEL), 4.0, 3.0));
             if single == Some(*id) {
                 for h in handle_positions(self.rect_to_screen(n.rect())) {
-                    painter.rect(Rect::from_center_size(h, vec2(8.0, 8.0)), 1.0, Color32::WHITE, Stroke::new(1.0, SEL), StrokeKind::Middle);
+                    painter.rect(Rect::from_center_size(h, vec2(8.0, 8.0)), 1.0, canvas_color(), Stroke::new(1.0, SEL), StrokeKind::Middle);
                 }
             }
         }

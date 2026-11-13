@@ -10,6 +10,68 @@ use crate::model::{
     Head, HeadFill, LinePattern, ShapeKind,
 };
 
+// ------------------------------------------------------------------------------------------------
+// Dark theme for the canvas. Diagrams keep their real colours (they are saved and exported as
+// drawn in the light theme); on screen in the dark theme, light fills become dark surfaces with a
+// hint of their hue, and dark lines and text become light. Strong colours are left alone.
+
+static DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_dark(on: bool) {
+    DARK.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn is_dark() -> bool {
+    DARK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Perceived lightness, 0 (black) to 1 (white).
+fn lightness(c: Color32) -> f32 {
+    let [r, g, b, _] = c.to_srgba_unmultiplied();
+    (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0
+}
+
+/// `a` moved towards `b` by `t` (0..1), keeping `a`'s alpha.
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let [ar, ag, ab, aa] = a.to_srgba_unmultiplied();
+    let [br, bg, bb, _] = b.to_srgba_unmultiplied();
+    let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgba_unmultiplied(f(ar, br), f(ag, bg), f(ab, bb), aa)
+}
+
+const DARK_SURFACE: Color32 = Color32::from_rgb(45, 46, 50);
+const DARK_INK: Color32 = Color32::from_rgb(218, 220, 224);
+
+/// A fill as shown in the current theme.
+pub fn tone_fill(c: Color32) -> Color32 {
+    if is_dark() && c.a() > 0 && lightness(c) > 0.6 { mix(DARK_SURFACE, c, 0.12) } else { c }
+}
+
+/// A package frame's fill: in the dark theme only a step above the canvas, so the objects inside
+/// (`tone_fill`) stand out from it.
+pub fn tone_frame(c: Color32) -> Color32 {
+    if is_dark() && c.a() > 0 && lightness(c) > 0.6 { mix(Color32::from_rgb(36, 37, 41), c, 0.05) } else { c }
+}
+
+/// A line or text colour as shown in the current theme.
+pub fn tone_ink(c: Color32) -> Color32 {
+    if is_dark() && c.a() > 0 && lightness(c) < 0.35 { mix(DARK_INK, c, 0.15) } else { c }
+}
+
+/// The canvas behind the diagram.
+pub fn canvas_color() -> Color32 {
+    if is_dark() { Color32::from_rgb(30, 31, 34) } else { Color32::WHITE }
+}
+
+pub fn grid_color() -> Color32 {
+    if is_dark() { Color32::from_rgb(42, 43, 47) } else { Color32::from_gray(235) }
+}
+
+/// Background of the small pointer badges.
+fn badge_color() -> Color32 {
+    if is_dark() { Color32::from_rgb(50, 52, 57) } else { Color32::from_gray(248) }
+}
+
 /// Per-object text a shape draws itself: the stereotype line and, for a package tab, the name.
 #[derive(Clone, Copy, Default)]
 pub struct Deco<'a> {
@@ -143,7 +205,7 @@ pub fn paint_members(painter: &Painter, n: &Node, r: Rect, zoom: f32, stroke: St
     if size < 3.0 {
         return;
     }
-    let color = Color32::from_rgba_unmultiplied(n.text_color[0], n.text_color[1], n.text_color[2], n.text_color[3]);
+    let color = tone_ink(Color32::from_rgba_unmultiplied(n.text_color[0], n.text_color[1], n.text_color[2], n.text_color[3]));
     let clipped = painter.with_clip_rect(r.shrink(1.0).intersect(painter.clip_rect()));
     for (m, y) in layout.lines {
         let format = egui::TextFormat {
@@ -202,7 +264,7 @@ pub fn paint_edge(
     for h in heads {
         match h.fill {
             HeadFill::Solid => painter.add(Shape::convex_polygon(h.points, color, Stroke::NONE)),
-            HeadFill::Hollow => painter.add(Shape::convex_polygon(h.points, Color32::WHITE, stroke)),
+            HeadFill::Hollow => painter.add(Shape::convex_polygon(h.points, canvas_color(), stroke)),
             HeadFill::Open => painter.add(Shape::line(h.points, stroke)),
         };
     }
@@ -221,6 +283,30 @@ pub fn paint_badge(painter: &Painter, pts: &[Pos2], head_len: f32, text: &str, s
     let galley = painter.layout_no_wrap(text.to_owned(), FontId::monospace(size), color);
     let box_size = galley.size() + vec2(6.0, 2.0);
     let rect = Rect::from_center_size(badge_center(pts, head_len, box_size, true), box_size);
-    painter.rect(rect, 3.0, Color32::from_gray(248), Stroke::new(1.0, color.gamma_multiply(0.5)), StrokeKind::Inside);
+    painter.rect(rect, 3.0, badge_color(), Stroke::new(1.0, color.gamma_multiply(0.5)), StrokeKind::Inside);
     painter.galley(rect.center() - galley.size() / 2.0, galley, color);
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+
+    #[test]
+    fn dark_theme_swaps_light_fills_and_dark_ink_only() {
+        set_dark(true);
+        let white = Color32::WHITE;
+        let black = Color32::BLACK;
+        let pastel = Color32::from_rgb(225, 236, 250);
+        let red = Color32::from_rgb(214, 39, 40);
+        assert!(lightness(tone_fill(white)) < 0.3, "white boxes become dark surfaces");
+        assert!(lightness(tone_fill(pastel)) < 0.3, "pastel boxes too");
+        let p = tone_fill(pastel).to_srgba_unmultiplied();
+        assert!(p[2] > p[0], "keeping a hint of their hue");
+        assert!(lightness(tone_ink(black)) > 0.7, "black lines and text become light");
+        assert_eq!(tone_ink(red), red, "strong colours stay");
+        assert_eq!(tone_fill(Color32::TRANSPARENT), Color32::TRANSPARENT);
+        set_dark(false);
+        assert_eq!(tone_fill(white), white);
+        assert_eq!(tone_ink(black), black);
+    }
 }

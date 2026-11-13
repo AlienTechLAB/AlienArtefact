@@ -33,6 +33,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 - Format panel: fill/line/font colors, line width, font size, position and size
 - Undo/redo, cut/copy/paste, duplicate, delete, bring to front / send to back
 - Pan and zoom, fit to content
+- Dark theme (default) or light, switched with the **Dark** checkbox in the toolbar or View > Dark theme. In the dark theme the canvas adapts the diagram's colours on screen; saved files and SVG exports keep the real colours
 - Projects and a docking workspace: a project holds diagrams, text notes and images, one tab each. Drag tabs between groups, onto an edge to split the area (as in VS Code), or out into a floating window; the layout is saved with the project. The diagram marked ● is the one the side panel and toolbar edit. Ctrl+T new diagram, Ctrl+W close tab; double-click a tab to rename, right-click to duplicate. Older project and single-diagram files still open
 - Save/open as `.json`, export the shown diagram to `.svg`
 

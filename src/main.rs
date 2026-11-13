@@ -77,7 +77,6 @@ fn main() -> eframe::Result {
         "Alien Artefact",
         options,
         Box::new(|cc| {
-            cc.egui_ctx.set_theme(egui::Theme::Light);
             // Image tabs show PNG/JPEG files.
             egui_extras::install_image_loaders(&cc.egui_ctx);
             // Ctrl +/- should not scale the whole UI.

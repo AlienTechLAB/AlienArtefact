@@ -94,6 +94,10 @@ pub struct App {
     pub palette_view: Option<PaletteView>,
     /// The category to show again when the panel is reopened with Ctrl+B.
     pub last_palette_view: PaletteView,
+    /// Dark theme (the default); switchable in the toolbar and the View menu.
+    pub dark: bool,
+    /// The theme last applied to egui, so it is only changed when `dark` changes.
+    applied_dark: Option<bool>,
 }
 
 impl Default for App {
@@ -137,6 +141,8 @@ impl Default for App {
             pointer_const: false,
             palette_view: Some(PaletteView::Objects),
             last_palette_view: PaletteView::Objects,
+            dark: true,
+            applied_dark: None,
         }
     }
 }
@@ -144,6 +150,11 @@ impl Default for App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.applied_dark != Some(self.dark) {
+            ctx.set_theme(if self.dark { egui::Theme::Dark } else { egui::Theme::Light });
+            crate::render::set_dark(self.dark);
+            self.applied_dark = Some(self.dark);
+        }
         self.handle_close(&ctx);
         self.handle_shortcuts(&ctx);
 
@@ -672,6 +683,7 @@ impl App {
                 ui.separator();
                 ui.checkbox(&mut self.show_grid, "Grid");
                 ui.checkbox(&mut self.snap, "Snap to grid");
+                ui.checkbox(&mut self.dark, "Dark theme");
             });
             ui.menu_button("Diagram", |ui| {
                 if ui.button("Validate").on_hover_text("Check the whole diagram against the language rules").clicked() {
@@ -715,6 +727,8 @@ impl App {
             ui.separator();
             ui.checkbox(&mut self.show_grid, "Grid");
             ui.checkbox(&mut self.snap, "Snap");
+            ui.separator();
+            ui.checkbox(&mut self.dark, "Dark").on_hover_text("Dark theme (also in View)");
         });
     }
 
@@ -909,7 +923,8 @@ impl App {
                 let icon = Rect::from_center_size(icon_area.center(), size * scale);
                 let stroke_col = ui.visuals().text_color();
                 let deco = Deco { stereotype: kind.stereotype(), name: "" };
-                paint_shape(ui.painter(), kind, icon, Color32::WHITE, Stroke::new(1.2, stroke_col), scale, 12.0 * scale, deco);
+                let fill = crate::render::tone_fill(Color32::WHITE);
+                paint_shape(ui.painter(), kind, icon, fill, Stroke::new(1.2, stroke_col), scale, 12.0 * scale, deco);
                 let caption = match kind {
                     ShapeKind::Trait => "trait",
                     ShapeKind::Enum => "enum",
