@@ -692,30 +692,7 @@ impl App {
 
     fn toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            if ui.button("New").clicked() {
-                self.new_file();
-            }
-            if ui.button("Open").clicked() {
-                self.open();
-            }
-            if ui.button("Save").clicked() {
-                self.save();
-            }
-            ui.separator();
-            if ui.add_enabled(!self.undo.is_empty(), egui::Button::new("Undo")).clicked() {
-                self.undo();
-            }
-            if ui.add_enabled(!self.redo.is_empty(), egui::Button::new("Redo")).clicked() {
-                self.redo();
-            }
-            ui.separator();
             let has_sel = !self.selection.is_empty();
-            if ui.add_enabled(has_sel, egui::Button::new("Delete")).clicked() {
-                self.delete_selected();
-            }
-            if ui.add_enabled(has_sel, egui::Button::new("Duplicate")).clicked() {
-                self.duplicate();
-            }
             if ui.add_enabled(has_sel, egui::Button::new("To front")).clicked() {
                 self.diagram.reorder(&self.selection, true);
             }
@@ -734,10 +711,6 @@ impl App {
             }
             if ui.button("Fit").clicked() {
                 self.fit_view();
-            }
-            ui.separator();
-            if ui.button("Validate").on_hover_text("Check the whole diagram against the language rules").clicked() {
-                self.validate_open = true;
             }
             ui.separator();
             ui.checkbox(&mut self.show_grid, "Grid");
