@@ -308,17 +308,26 @@ pub struct Node {
     /// For an enum: the variants are bit flags that combine.
     #[serde(default)]
     pub flags: bool,
-    /// For a text file: its format (json, toml, txt, ...). Can be changed.
-    #[serde(default)]
-    pub format: String,
     /// For a text file: its contents, edited in a tab.
     #[serde(default)]
     pub content: String,
 }
 
-/// Formats offered for text files (any other can be typed).
+/// The known text formats: a text file's format is its name's extension when it is one of
+/// these, and `txt` otherwise.
 pub const TEXT_FORMATS: [&str; 15] =
     ["txt", "json", "toml", "yaml", "xml", "csv", "md", "ini", "html", "log", "h", "c", "cpp", "rs", "py"];
+
+/// The format of a text file named `name` (a name, path or pattern): its extension if known,
+/// else `txt`.
+pub fn text_format(name: &str) -> &'static str {
+    let last = name.trim().rsplit(['/', '\\']).next().unwrap_or("");
+    let ext = match last.rsplit_once('.') {
+        Some((_, ext)) => ext.to_ascii_lowercase(),
+        None => return "txt",
+    };
+    TEXT_FORMATS.iter().copied().find(|f| *f == ext).unwrap_or("txt")
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemberKind {
@@ -527,19 +536,15 @@ impl Node {
             task: None,
             generated: false,
             flags: false,
-            format: if kind == ShapeKind::File { "txt".into() } else { String::new() },
             content: String::new(),
         }
     }
 
-    /// The small tag at the bottom of a file's page: its format for a text file, `BIN` for a
-    /// binary one.
+    /// The small tag at the bottom of a file's page: its format (from the extension) for a text
+    /// file, `BIN` for a binary one.
     pub fn file_tag(&self) -> Option<String> {
         match self.kind {
-            ShapeKind::File => {
-                let f = self.format.trim();
-                Some(if f.is_empty() { "TXT".to_owned() } else { f.to_uppercase() })
-            }
+            ShapeKind::File => Some(text_format(&self.text).to_uppercase()),
             ShapeKind::BinaryFile => Some("BIN".to_owned()),
             _ => None,
         }
@@ -2484,7 +2489,7 @@ mod file_kind_tests {
     fn text_and_binary_files() {
         let t = Node::new(1, ShapeKind::File, pos2(0.0, 0.0));
         let b = Node::new(2, ShapeKind::BinaryFile, pos2(0.0, 0.0));
-        assert_eq!((t.text.as_str(), t.format.as_str()), ("file.txt", "txt"));
+        assert_eq!(t.text.as_str(), "file.txt");
         assert_eq!(t.file_tag().as_deref(), Some("TXT"));
         assert_eq!(b.file_tag().as_deref(), Some("BIN"));
         assert!(b.kind.is_storage() && b.kind.is_file() && b.kind.is_named());
@@ -2492,9 +2497,24 @@ mod file_kind_tests {
         assert!(t.rect().contains_rect(t.text_rect()) && t.text_rect().bottom() < t.rect().bottom());
 
         // Files from before the text/binary split are text files with no contents.
-        let json = serde_json::to_string(&t).unwrap().replace(r#","format":"txt","content":"""#, "");
+        let json = serde_json::to_string(&t).unwrap().replace(r#","content":"""#, "");
         let old: Node = serde_json::from_str(&json).unwrap();
-        assert_eq!((old.kind, old.format.as_str(), old.content.as_str()), (ShapeKind::File, "", ""));
+        assert_eq!((old.kind, old.content.as_str()), (ShapeKind::File, ""));
         assert_eq!(old.file_tag().as_deref(), Some("TXT"));
+        // A stored format from the version that had a Format field is ignored.
+        let json = serde_json::to_string(&t).unwrap().replace(r#""content":"#, r#""format":"json","content":"#);
+        let old: Node = serde_json::from_str(&json).unwrap();
+        assert_eq!(old.file_tag().as_deref(), Some("TXT"));
+    }
+
+    #[test]
+    fn the_format_comes_from_the_extension() {
+        assert_eq!(text_format("settings.toml"), "toml");
+        assert_eq!(text_format("config/App.JSON"), "json");
+        assert_eq!(text_format("src\\main.rs"), "rs");
+        assert_eq!(text_format("*.cpp"), "cpp");
+        assert_eq!(text_format("notes.docx"), "txt", "unknown extensions are plain text");
+        assert_eq!(text_format("README"), "txt");
+        assert_eq!(text_format("v1.2/README"), "txt", "a dot in a folder is not an extension");
     }
 }

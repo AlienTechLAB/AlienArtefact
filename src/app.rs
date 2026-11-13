@@ -1115,15 +1115,6 @@ impl App {
                         ui.end_row();
                     }
                     if n.kind == ShapeKind::File {
-                        ui.label("Format").on_hover_text("What the text in the file is; can be changed");
-                        egui::ComboBox::from_id_salt("file_format")
-                            .selected_text(if n.format.is_empty() { "txt" } else { n.format.as_str() })
-                            .show_ui(ui, |ui| {
-                                for f in crate::model::TEXT_FORMATS {
-                                    ui.selectable_value(&mut n.format, f.to_owned(), f);
-                                }
-                            });
-                        ui.end_row();
                         ui.label("Contents");
                         if ui.button("Edit contents").on_hover_text("Or double-click the file").clicked() {
                             self.open_file_request = Some(n.id);

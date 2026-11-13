@@ -3,6 +3,7 @@
 
 mod app;
 mod canvas;
+mod code;
 mod model;
 mod render;
 mod svg;

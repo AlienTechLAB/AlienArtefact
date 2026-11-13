@@ -512,7 +512,12 @@ impl App {
                 Pending::Duplicate(id) => self.duplicate_tab(id),
                 Pending::Rename(id) => {
                     if let Some(i) = self.index_of(id) {
-                        self.renaming = Some((i, self.tabs[i].name.clone()));
+                        // A file's tab shows the file's name, so that is what is renamed.
+                        let name = match self.tabs[i].content {
+                            Content::FileText { diagram, node } => self.file_node(diagram, node).map(|n| n.text.clone()),
+                            _ => None,
+                        };
+                        self.renaming = Some((i, name.unwrap_or_else(|| self.tabs[i].name.clone())));
                         self.rename_focus = true;
                     }
                 }
@@ -553,11 +558,22 @@ impl App {
         if commit {
             let name = text.trim().to_owned();
             if !name.is_empty() {
-                self.tabs[i].name = name;
+                self.rename_tab(i, name);
             }
         } else if keep {
             self.renaming = Some((i, text));
         }
+    }
+
+    /// Gives tab `i` a new name. For a file's editor tab this renames the file in its diagram
+    /// (and so its format, which follows the extension).
+    pub fn rename_tab(&mut self, i: usize, name: String) {
+        if let Content::FileText { diagram, node } = self.tabs[i].content {
+            if let Some(n) = self.file_node_mut(diagram, node) {
+                n.text = name.clone();
+            }
+        }
+        self.tabs[i].name = name;
     }
 
     /// Text file object `node` of diagram tab `diagram`, wherever that diagram's state is.
@@ -620,12 +636,8 @@ impl App {
             ui.weak("\u{2014} saved with the diagram");
         });
         ui.separator();
-        egui::ScrollArea::both().id_salt(("file", id)).show(ui, |ui| {
-            ui.add_sized(
-                ui.available_size(),
-                egui::TextEdit::multiline(&mut n.content).code_editor().desired_width(f32::INFINITY),
-            );
-        });
+        let format = crate::model::text_format(&n.text);
+        crate::code::code_editor(ui, ("file", id), &mut n.content, format);
     }
 
     fn show_text(&mut self, i: usize, ui: &mut Ui) {
@@ -876,6 +888,12 @@ mod tests {
         app.mark_project_saved();
         app.open_file_tab(app.diagram.nodes.iter().find(|n| n.kind == ShapeKind::File).unwrap().id);
         assert!(!app.project_dirty());
+
+        // Renaming its tab renames the file, and its format follows the new extension.
+        let i = app.index_of(tab).unwrap();
+        app.rename_tab(i, "main.cpp".into());
+        let n = app.file_node(diagram, node).unwrap();
+        assert_eq!((n.text.as_str(), n.file_tag().as_deref()), ("main.cpp", Some("CPP")));
     }
 
     #[test]
