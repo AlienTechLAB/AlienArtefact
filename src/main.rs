@@ -86,6 +86,9 @@ fn main() -> eframe::Result {
             // Optional diagram file to open: `alien_artefact project.json`
             if let Some(path) = std::env::args_os().nth(1) {
                 app.open_path(path.into());
+            } else {
+                // Without a project: no tabs and no palette, until the user asks for them.
+                app.start_empty();
             }
             Ok(Box::new(app))
         }),

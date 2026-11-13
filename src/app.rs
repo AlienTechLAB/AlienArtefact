@@ -62,7 +62,8 @@ pub struct App {
     pub path: Option<PathBuf>,
     /// The project's diagrams, one tab each. The active tab's state is in the fields above.
     pub tabs: Vec<Tab>,
-    pub active: usize,
+    /// The tab of the diagram held in the fields above; `None` when the project has no diagram.
+    pub active: Option<usize>,
     /// Tab names as last saved (adding, removing, renaming or reordering tabs is a change).
     pub saved_names: Vec<String>,
     /// The tab being renamed, and the name typed so far.
@@ -130,7 +131,7 @@ impl Default for App {
             saved: Diagram::default(),
             path: None,
             tabs: vec![Tab { id: 1, name: "Diagram 1".into(), content: Content::Diagram(None) }],
-            active: 0,
+            active: Some(0),
             saved_names: vec!["Diagram 1".into()],
             renaming: None,
             rename_focus: false,
@@ -277,6 +278,12 @@ impl App {
         }
     }
 
+    /// The app as started without a project: nothing open, the palette hidden.
+    pub fn start_empty(&mut self) {
+        self.reset_project(Project { items: Vec::new(), active: None, layout: None }, None);
+        self.palette_view = None;
+    }
+
     fn new_file(&mut self) {
         if self.confirm_discard() {
             self.reset_project(Project { items: Vec::new(), active: None, layout: None }, None);
@@ -333,7 +340,7 @@ impl App {
             alien_artefact_project: 2,
             diagrams: Vec::new(),
             items: self.project_items(),
-            active: self.tabs[self.active].id,
+            active: self.active_id().unwrap_or(0),
             layout: crate::model::layout_to_text(&self.dock),
         };
         let json = serde_json::to_string_pretty(&project).expect("project serializes");
@@ -350,7 +357,7 @@ impl App {
     fn export_svg(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("SVG image", &["svg"])
-            .set_file_name(format!("{}.svg", self.active_tab_name()))
+            .set_file_name(format!("{}.svg", self.active_tab_name().unwrap_or("diagram")))
             .save_file()
         else {
             return;
@@ -368,11 +375,11 @@ impl App {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled".into());
-        let title = format!(
-            "{name}{} \u{2014} {} - Alien Artefact",
-            if self.dirty() { "*" } else { "" },
-            self.active_tab_name()
-        );
+        let dirty = if self.dirty() { "*" } else { "" };
+        let title = match self.active_tab_name() {
+            Some(tab) => format!("{name}{dirty} \u{2014} {tab} - Alien Artefact"),
+            None => format!("{name}{dirty} - Alien Artefact"),
+        };
         if title != self.title {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
             self.title = title;
@@ -754,14 +761,20 @@ impl App {
                 ui.label(sel.status()).on_hover_text(sel.reference());
                 ui.separator();
             }
-            ui.label(format!(
-                "{} shapes, {} lines  |  zoom {:.0}%",
-                self.diagram.nodes.len(),
-                self.diagram.edges.len(),
-                self.zoom * 100.0
-            ));
+            let mut first = true;
+            if self.active.is_some() {
+                ui.label(format!(
+                    "{} shapes, {} lines  |  zoom {:.0}%",
+                    self.diagram.nodes.len(),
+                    self.diagram.edges.len(),
+                    self.zoom * 100.0
+                ));
+                first = false;
+            }
             if !self.status.is_empty() {
-                ui.separator();
+                if !first {
+                    ui.separator();
+                }
                 ui.label(&self.status);
             }
         });
@@ -775,59 +788,36 @@ impl App {
         }
     }
 
-    /// The icon strip: one icon per palette category. Clicking an icon shows that category; clicking
-    /// the shown one hides the panel.
+    /// The icon strip (VS Code's activity bar). For now one icon: the diagram palette. Clicking
+    /// it shows or hides the palette panel.
     fn activity_bar(&mut self, ui: &mut Ui) {
         const ACCENT: Color32 = Color32::from_rgb(0, 120, 215);
         ui.add_space(6.0);
-        for view in PaletteView::ALL {
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
-            let shown = self.palette_view == Some(view);
-            let hint = if shown { format!("{} (click to hide)", view.title()) } else { view.title().to_owned() };
-            let resp = resp.on_hover_text(hint);
-            let painter = ui.painter();
-            if resp.hovered() {
-                painter.rect_filled(rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill);
-            }
-            if shown {
-                painter.rect_filled(Rect::from_min_size(rect.min, vec2(2.0, rect.height())), 0.0, ACCENT);
-            }
-            let col = if shown || resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
-            let icon = Rect::from_center_size(rect.center(), vec2(26.0, 20.0));
-            let stroke = Stroke::new(1.4, col);
-            match view {
-                PaletteView::Objects => {
-                    paint_shape(painter, ShapeKind::Class, icon, Color32::TRANSPARENT, stroke, 0.5, 4.0, Deco::default());
-                }
-                PaletteView::Collections => {
-                    paint_shape(painter, ShapeKind::Vector, icon, Color32::TRANSPARENT, stroke, 0.5, 4.0, Deco::default());
-                }
-                PaletteView::Pointers => {
-                    let y = icon.center().y;
-                    let pts = [Pos2::new(icon.left() - 4.0, y), Pos2::new(icon.right() + 4.0, y)];
-                    paint_edge(painter, &pts, col, 1.4, LinePattern::Solid, Head::Diamond, Head::Arrow, 0.7);
-                }
-                PaletteView::Relations => {
-                    let y = icon.center().y;
-                    let pts = [Pos2::new(icon.left() - 4.0, y), Pos2::new(icon.right() + 4.0, y)];
-                    paint_edge(painter, &pts, col, 1.4, LinePattern::Solid, Head::None, Head::HollowArrow, 0.9);
-                }
-            }
-            if resp.clicked() {
-                if shown {
-                    self.toggle_palette();
-                } else {
-                    self.palette_view = Some(view);
-                }
-            }
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+        let shown = self.palette_view.is_some();
+        let resp = resp.on_hover_text(if shown { "Diagram shapes (click to hide, Ctrl+B)" } else { "Diagram shapes (Ctrl+B)" });
+        let painter = ui.painter();
+        if resp.hovered() {
+            painter.rect_filled(rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill);
+        }
+        if shown {
+            painter.rect_filled(Rect::from_min_size(rect.min, vec2(2.0, rect.height())), 0.0, ACCENT);
+        }
+        let col = if shown || resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
+        let icon = Rect::from_center_size(rect.center(), vec2(26.0, 20.0));
+        paint_shape(painter, ShapeKind::Class, icon, Color32::TRANSPARENT, Stroke::new(1.4, col), 0.5, 4.0, Deco::default());
+        if resp.clicked() {
+            self.toggle_palette();
         }
     }
 
-    /// The palette panel: the shapes or lines of one category, under a header with a hide button.
+    /// The diagram palette: a header with a hide button, a tab per category (Objects, Collections,
+    /// Pointers, Relations) and the shapes or lines of the chosen one. Clicking a shape adds it
+    /// to the active diagram (a new diagram if there is none).
     fn palette(&mut self, ui: &mut Ui, view: PaletteView) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.strong(view.title().to_uppercase());
+            ui.strong("DIAGRAM");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // A left-pointing chevron, drawn (no icon font needed).
                 let (rect, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
@@ -845,6 +835,16 @@ impl App {
                     self.toggle_palette();
                 }
             });
+        });
+        ui.add_space(2.0);
+        // The category tabs.
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for v in PaletteView::ALL {
+                if ui.selectable_label(v == view, v.title()).clicked() {
+                    self.palette_view = Some(v);
+                }
+            }
         });
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -887,7 +887,13 @@ impl App {
             col,
         );
         if resp.clicked() {
-            self.link_tool = if active { None } else { Some(kind) };
+            if active {
+                self.link_tool = None;
+            } else {
+                // Lines are drawn on the active diagram: make sure there is one, in view.
+                self.ensure_diagram();
+                self.link_tool = Some(kind);
+            }
         }
     }
 
@@ -969,9 +975,7 @@ impl App {
                 );
 
                 if resp.clicked() {
-                    let n = self.diagram.nodes.len() as f32;
-                    let center = self.to_world(self.canvas_rect.center()) + vec2(1.0, 1.0) * (n % 8.0) * 10.0;
-                    self.add_node_at(kind, center);
+                    self.add_shape_from_palette(kind);
                 }
                 if resp.drag_started() {
                     self.palette_drag = Some(kind);

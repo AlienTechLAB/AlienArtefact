@@ -158,20 +158,36 @@ impl App {
 
     /// Makes diagram tab `i` the one in the app's fields, without any other effect.
     fn swap_active(&mut self, i: usize) {
-        if i == self.active || !self.tabs[i].is_diagram() {
+        if self.active == Some(i) || !self.tabs[i].is_diagram() {
             return;
         }
         let current = self.stash();
-        self.tabs[self.active].content = Content::Diagram(Some(current));
+        if let Some(a) = self.active {
+            self.tabs[a].content = Content::Diagram(Some(current));
+        }
         let Content::Diagram(next) = &mut self.tabs[i].content else { unreachable!() };
         let next = next.take().expect("inactive diagrams hold their state");
         self.restore(next);
-        self.active = i;
+        self.active = Some(i);
+    }
+
+    /// Puts the active diagram back into its tab, leaving no diagram active (the app's fields
+    /// then hold an empty diagram that is not shown anywhere).
+    fn detach_active(&mut self) {
+        let Some(a) = self.active.take() else { return };
+        let current = self.stash();
+        self.tabs[a].content = Content::Diagram(Some(current));
+        self.restore(TabState::new(Diagram::default(), true));
+    }
+
+    /// The id of the active diagram's tab, if there is a diagram.
+    pub fn active_id(&self) -> Option<ItemId> {
+        self.active.map(|a| self.tabs[a].id)
     }
 
     /// Makes diagram tab `i` the active one (the format panel, toolbar and shortcuts work on it).
     pub fn switch_tab(&mut self, i: usize) {
-        if i == self.active || i >= self.tabs.len() || !self.tabs[i].is_diagram() || self.link_error.is_some() {
+        if self.active == Some(i) || i >= self.tabs.len() || !self.tabs[i].is_diagram() || self.link_error.is_some() {
             return;
         }
         // Whatever was being edited becomes an undo step of the diagram it was done in.
@@ -185,7 +201,7 @@ impl App {
     /// and stays active if the user pressed a mouse button on it.
     fn show_diagram(&mut self, i: usize, ui: &mut Ui) {
         let id = self.tabs[i].id;
-        if i == self.active {
+        if self.active == Some(i) {
             self.canvas(ui);
         } else {
             let previous = self.active;
@@ -193,7 +209,7 @@ impl App {
             let pressed = self.canvas(ui);
             if pressed {
                 // The previous diagram's last edits become its own undo step.
-                if let Content::Diagram(Some(prev)) = &mut self.tabs[previous].content {
+                if let Some(Content::Diagram(Some(prev))) = previous.map(|p| &mut self.tabs[p].content) {
                     if prev.diagram != prev.stable {
                         let before = std::mem::replace(&mut prev.stable, prev.diagram.clone());
                         prev.undo.push(before);
@@ -202,21 +218,24 @@ impl App {
                     prev.editing = None;
                 }
             } else {
-                self.swap_active(previous);
+                match previous {
+                    Some(p) => self.swap_active(p),
+                    None => self.detach_active(),
+                }
             }
         }
         self.visible_diagrams.push((id, ui.min_rect()));
     }
 
-    pub fn active_tab_name(&self) -> &str {
-        &self.tabs[self.active].name
+    pub fn active_tab_name(&self) -> Option<&str> {
+        self.active.map(|a| self.tabs[a].name.as_str())
     }
 
     /// The visible diagram tab under screen point `p` (as drawn last frame), the active one first.
     pub fn diagram_tab_at(&self, p: Pos2) -> Option<usize> {
-        let active_id = self.tabs[self.active].id;
+        let active_id = self.active_id();
         let mut hits = self.last_visible_diagrams.iter().filter(|(_, r)| r.contains(p));
-        let first = hits.clone().find(|(id, _)| *id == active_id).or_else(|| hits.next())?;
+        let first = hits.clone().find(|(id, _)| Some(*id) == active_id).or_else(|| hits.next())?;
         self.index_of(first.0)
     }
 
@@ -254,6 +273,35 @@ impl App {
         id
     }
 
+    /// Makes sure there is an active diagram and that its tab is the one shown in its group:
+    /// when the project has no diagram, a new one is created.
+    pub fn ensure_diagram(&mut self) {
+        match self.active_id() {
+            None => {
+                self.add_tab(NewKind::Diagram, None);
+            }
+            Some(id) => {
+                if let Some(path) = self.dock.find_tab(&id) {
+                    let _ = self.dock.set_active_tab(path);
+                }
+            }
+        }
+    }
+
+    /// A shape clicked in the palette: added to the middle of the active diagram's view (to a new
+    /// diagram if there is none), a little apart from the previous ones.
+    pub fn add_shape_from_palette(&mut self, kind: ShapeKind) {
+        self.ensure_diagram();
+        let n = self.diagram.nodes.len() as f32;
+        let middle = if self.canvas_rect.is_positive() {
+            self.to_world(self.canvas_rect.center())
+        } else {
+            // A diagram not drawn yet.
+            Pos2::new(300.0, 200.0)
+        };
+        self.add_node_at(kind, middle + vec2(1.0, 1.0) * (n % 8.0) * 10.0);
+    }
+
     pub fn new_tab(&mut self) {
         self.add_tab(NewKind::Diagram, None);
     }
@@ -267,11 +315,6 @@ impl App {
             // Its text belongs to the diagram; closing the tab loses nothing.
             Content::FileText { .. } => false,
         }
-    }
-
-    /// Whether tab `i` may be closed: everything except the last diagram.
-    fn closeable(&self, i: usize) -> bool {
-        !self.tabs[i].is_diagram() || self.tabs.iter().filter(|t| t.is_diagram()).count() > 1
     }
 
     /// Asks before closing a tab with contents. True when it may go.
@@ -293,14 +336,18 @@ impl App {
     /// Removes tab `id` from the project (the dock no longer shows it).
     fn forget_tab(&mut self, id: ItemId) {
         let Some(i) = self.index_of(id) else { return };
-        if i == self.active {
-            // Hand the app's fields to another diagram first.
-            let Some(next) = (0..self.tabs.len()).find(|&j| j != i && self.tabs[j].is_diagram()) else { return };
-            self.switch_tab(next);
+        if self.active == Some(i) {
+            // Hand the app's fields to another diagram first, if there is one.
+            self.force_commit();
+            self.editing = None;
+            match (0..self.tabs.len()).find(|&j| j != i && self.tabs[j].is_diagram()) {
+                Some(next) => self.swap_active(next),
+                None => self.detach_active(),
+            }
         }
         let name = self.tabs.remove(i).name;
-        if i < self.active {
-            self.active -= 1;
+        if let Some(a) = self.active.filter(|&a| i < a) {
+            self.active = Some(a - 1);
         }
         self.status = format!("Closed \"{name}\"");
     }
@@ -308,10 +355,6 @@ impl App {
     /// Closes tab `id`, asking first if it has contents (Ctrl+W, menu).
     pub fn close_item(&mut self, id: ItemId) {
         let Some(i) = self.index_of(id) else { return };
-        if !self.closeable(i) {
-            self.status = "A project keeps at least one diagram.".into();
-            return;
-        }
         if !self.confirm_close(i) {
             return;
         }
@@ -379,11 +422,7 @@ impl App {
 
     /// Replaces the whole project.
     pub fn reset_project(&mut self, project: Project, path: Option<std::path::PathBuf>) {
-        let mut items = project.items;
-        if !items.iter().any(|i| matches!(i.content, ItemContent::Diagram(_))) {
-            let id = items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-            items.push(ProjectItem { id, name: "Diagram 1".into(), content: ItemContent::Diagram(Diagram::default()) });
-        }
+        let items = project.items;
         self.dock = project.layout.unwrap_or_else(|| Layout::new(items.iter().map(|i| i.id).collect()));
         self.tabs = items
             .into_iter()
@@ -402,12 +441,12 @@ impl App {
             .active
             .and_then(|id| self.index_of(id))
             .filter(|&i| self.tabs[i].is_diagram())
-            .or_else(|| self.tabs.iter().position(Tab::is_diagram))
-            .unwrap();
-        let Content::Diagram(state) = &mut self.tabs[active].content else { unreachable!() };
-        let state = state.take().unwrap();
-        self.restore(state);
-        self.active = active;
+            .or_else(|| self.tabs.iter().position(Tab::is_diagram));
+        self.active = None;
+        self.restore(TabState::new(Diagram::default(), true));
+        if let Some(active) = active {
+            self.swap_active(active);
+        }
         self.next_item_id = self.tabs.iter().map(|t| t.id).max().unwrap_or(0) + 1;
         self.saved_names = self.content_tab_names();
         self.renaming = None;
@@ -486,6 +525,8 @@ impl App {
             DockArea::new(&mut dock)
                 .style(style)
                 .show_add_buttons(true)
+                // No collapse triangle in front of each tab group.
+                .show_leaf_collapse_buttons(false)
                 // The + button opens `add_popup` (Diagram, Text note, Image) rather than calling `on_add`.
                 .show_add_popup(true)
                 .show_leaf_close_all_buttons(false)
@@ -499,8 +540,8 @@ impl App {
 
         // The active diagram should be one that can be seen: when it is hidden behind another tab,
         // the first visible diagram takes over.
-        let active_id = self.tabs[self.active].id;
-        if !self.visible_diagrams.iter().any(|(id, _)| *id == active_id) {
+        let active_id = self.active_id();
+        if !self.visible_diagrams.iter().any(|(id, _)| Some(*id) == active_id) {
             if let Some(i) = self.visible_diagrams.first().and_then(|(id, _)| self.index_of(*id)) {
                 self.switch_tab(i);
             }
@@ -615,7 +656,7 @@ impl App {
     /// Opens (or brings forward) the tab editing the contents of text file `node` of the active
     /// diagram.
     pub fn open_file_tab(&mut self, node: Id) {
-        let diagram = self.tabs[self.active].id;
+        let Some(diagram) = self.active_id() else { return };
         if self.diagram.node(node).is_none_or(|n| n.kind != ShapeKind::File) {
             return;
         }
@@ -730,7 +771,7 @@ impl TabViewer for Viewer<'_> {
         }
         let t = &self.app.tabs[i];
         let dirty = if self.app.tab_dirty(t) { " *" } else { "" };
-        let active = if i == self.app.active { "\u{25cf} " } else { "" };
+        let active = if self.app.active == Some(i) { "\u{25cf} " } else { "" };
         format!("{active}{}{dirty}", t.name).into()
     }
 
@@ -763,13 +804,9 @@ impl TabViewer for Viewer<'_> {
         }
     }
 
-    fn is_closeable(&self, tab: &ItemId) -> bool {
-        self.app.index_of(*tab).is_some_and(|i| self.app.closeable(i))
-    }
-
     fn on_close(&mut self, tab: &mut ItemId) -> OnCloseResponse {
         let Some(i) = self.app.index_of(*tab) else { return OnCloseResponse::Close };
-        if !self.app.closeable(i) || !self.app.confirm_close(i) {
+        if !self.app.confirm_close(i) {
             return OnCloseResponse::Ignore;
         }
         self.pending.push(Pending::Closed(*tab));
@@ -809,7 +846,7 @@ mod tests {
     #[test]
     fn each_diagram_keeps_its_own_state_and_history() {
         let mut app = app_with_tabs();
-        assert_eq!((app.tabs.len(), app.active), (2, 1));
+        assert_eq!((app.tabs.len(), app.active), (2, Some(1)));
         assert_eq!(app.diagram.nodes.len(), 2);
 
         app.switch_tab(0);
@@ -828,14 +865,14 @@ mod tests {
         let text = app.add_tab(NewKind::Text, None);
         let image = app.add_tab(NewKind::Image, None);
         assert_eq!(app.tabs.len(), 4);
-        assert_eq!(app.active, 1, "adding a note or image keeps the active diagram");
+        assert_eq!(app.active, Some(1), "adding a note or image keeps the active diagram");
         assert_eq!(app.dock.iter_all_tabs().count(), 4, "every tab is in the layout");
         assert!(!app.tabs[app.index_of(text).unwrap()].is_diagram());
 
         // Switching to a non-diagram does nothing.
         let at = app.index_of(image).unwrap();
         app.switch_tab(at);
-        assert_eq!(app.active, 1);
+        assert_eq!(app.active, Some(1));
     }
 
     #[test]
@@ -856,21 +893,16 @@ mod tests {
         assert!(app.project_dirty(), "renaming a tab is a change");
 
         let layout = app.dock.clone();
-        let active_id = app.tabs[app.active].id;
+        let active_id = app.active_id().unwrap();
         app.reset_project(Project { items, active: Some(active_id), layout: Some(layout) }, None);
         assert_eq!(app.tabs.len(), 3);
-        assert_eq!(app.tabs[app.active].id, active_id);
+        assert_eq!(app.active_id(), Some(active_id));
         assert_eq!(app.diagram.nodes.len(), 2);
         assert!(!app.project_dirty());
     }
 
     #[test]
-    fn the_last_diagram_cannot_be_closed_and_closing_the_active_one_moves_on() {
-        let mut app = App::default();
-        assert!(!app.closeable(0), "the only diagram stays");
-        let text = app.add_tab(NewKind::Text, None);
-        assert!(app.closeable(app.index_of(text).unwrap()));
-
+    fn closing_the_active_diagram_moves_on_and_the_last_one_can_go_too() {
         let mut app = app_with_tabs(); // two diagrams, the second active (non-empty)
         let first = app.tabs[0].id;
         app.switch_tab(0);
@@ -878,8 +910,21 @@ mod tests {
         // it has removed the tab.
         app.forget_tab(first);
         assert_eq!(app.tabs.len(), 1);
-        assert_eq!(app.active, 0);
+        assert_eq!(app.active, Some(0));
         assert_eq!(app.diagram.nodes.len(), 2, "now showing the remaining diagram");
+
+        // The last diagram may be closed: then there is none, and the project has no diagram.
+        let last = app.tabs[0].id;
+        app.forget_tab(last);
+        assert_eq!((app.tabs.len(), app.active), (0, None));
+        assert!(app.diagram.nodes.is_empty());
+        assert!(app.project_items().is_empty());
+
+        // Adding a shape from the palette then starts a new diagram.
+        app.add_shape_from_palette(ShapeKind::Class);
+        assert_eq!(app.tabs.len(), 1);
+        assert!(app.tabs[0].is_diagram() && app.active == Some(0));
+        assert_eq!(app.diagram.nodes.len(), 1);
     }
 
     #[test]
@@ -922,6 +967,19 @@ mod tests {
     }
 
     #[test]
+    fn the_app_starts_empty_and_the_palette_makes_a_diagram() {
+        let mut app = App::default();
+        app.start_empty();
+        assert!(app.tabs.is_empty() && app.active.is_none() && app.palette_view.is_none());
+        assert_eq!(app.dock.iter_all_tabs().count(), 0);
+        assert!(!app.project_dirty());
+
+        app.add_shape_from_palette(ShapeKind::Trait);
+        assert_eq!(app.dock.iter_all_tabs().count(), 1, "a new diagram tab is shown");
+        assert_eq!((app.active, app.diagram.nodes.len()), (Some(0), 1));
+    }
+
+    #[test]
     fn image_paths_become_file_uris() {
         assert_eq!(file_uri(r"C:\pics\a.png"), "file:///C:/pics/a.png");
         assert_eq!(file_uri("/home/me/a.png"), "file:///home/me/a.png");
@@ -930,10 +988,10 @@ mod tests {
     #[test]
     fn duplicate_copies_contents_into_a_new_unsaved_tab() {
         let mut app = app_with_tabs();
-        let id = app.tabs[app.active].id;
+        let id = app.active_id().unwrap();
         app.duplicate_tab(id);
         assert_eq!(app.tabs.len(), 3);
-        assert!(app.tabs[app.active].name.ends_with("copy"));
+        assert!(app.active_tab_name().unwrap().ends_with("copy"));
         assert_eq!(app.diagram.nodes.len(), 2);
     }
 }
