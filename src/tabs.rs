@@ -472,6 +472,7 @@ impl App {
         self.last_visible_diagrams = std::mem::take(&mut self.visible_diagrams);
         let mut dock = std::mem::replace(&mut self.dock, Layout::new(Vec::new()));
         let mut pending = Vec::new();
+        self.tab_rects.clear();
         let style = Style::from_egui(ui.style().as_ref());
         {
             let mut viewer = Viewer { app: self, pending: &mut pending };
@@ -526,34 +527,43 @@ impl App {
         self.rename_window(ui.ctx());
     }
 
-    /// A small window for renaming a tab (double-click on a tab, or its context menu).
+    /// Renaming a tab in place (double-click on a tab, or its context menu): a text field drawn
+    /// over the tab. Enter or clicking elsewhere keeps the new name, Esc cancels.
     fn rename_window(&mut self, ctx: &egui::Context) {
         let Some((i, mut text)) = self.renaming.take() else { return };
         if i >= self.tabs.len() {
             return;
         }
+        // A tab that is not shown (e.g. in a hidden window) cannot be renamed in place.
+        let Some(&rect) = self.tab_rects.get(&self.tabs[i].id) else { return };
         let mut keep = true;
         let mut commit = false;
-        egui::Window::new("Rename tab")
-            .id(egui::Id::unique("rename_tab"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_TOP, vec2(0.0, 120.0))
+        let edit_id = egui::Id::unique("rename_tab_edit");
+        if self.rename_focus {
+            // Start with the whole name selected, as in VS Code.
+            let mut state = egui::text_edit::TextEditState::load(ctx, edit_id).unwrap_or_default();
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::select_all_str(&text)));
+            state.store(ctx, edit_id);
+        }
+        egui::Area::new(egui::Id::unique("rename_tab"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.min)
             .show(ctx, |ui| {
-                let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(240.0));
+                let font = egui::TextStyle::Body.resolve(ui.style());
+                let text_w = ui.fonts_mut(|f| f.layout_no_wrap(text.clone(), font, egui::Color32::WHITE).size().x);
+                let width = (text_w + 16.0).max(rect.width());
+                let r = ui.add_sized(
+                    vec2(width, rect.height()),
+                    egui::TextEdit::singleline(&mut text).id(edit_id).align(egui::Align2::LEFT_CENTER),
+                );
                 if self.rename_focus {
                     r.request_focus();
                     self.rename_focus = false;
+                } else if ui.input(|inp| inp.key_pressed(egui::Key::Escape)) {
+                    keep = false;
+                } else if r.lost_focus() {
+                    commit = true;
                 }
-                let enter = r.lost_focus() && ui.input(|inp| inp.key_pressed(egui::Key::Enter));
-                ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() || enter {
-                        commit = true;
-                    }
-                    if ui.button("Cancel").clicked() || ui.input(|inp| inp.key_pressed(egui::Key::Escape)) {
-                        keep = false;
-                    }
-                });
             });
         if commit {
             let name = text.trim().to_owned();
@@ -730,6 +740,7 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn on_tab_button(&mut self, tab: &mut ItemId, response: &egui::Response) {
+        self.app.tab_rects.insert(*tab, response.rect);
         if response.double_clicked() {
             self.pending.push(Pending::Rename(*tab));
         } else if response.clicked() {

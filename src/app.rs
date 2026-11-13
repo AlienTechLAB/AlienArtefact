@@ -68,6 +68,8 @@ pub struct App {
     /// The tab being renamed, and the name typed so far.
     pub renaming: Option<(usize, String)>,
     pub rename_focus: bool,
+    /// Where each tab's button was drawn this frame (the rename field is drawn over it).
+    pub tab_rects: std::collections::HashMap<u64, egui::Rect>,
     /// Where the tabs are: groups, splits and floating windows.
     pub dock: crate::model::Layout,
     pub next_item_id: u64,
@@ -129,6 +131,7 @@ impl Default for App {
             saved_names: vec!["Diagram 1".into()],
             renaming: None,
             rename_focus: false,
+            tab_rects: Default::default(),
             dock: crate::model::Layout::new(vec![1]),
             next_item_id: 2,
             visible_diagrams: Vec::new(),
