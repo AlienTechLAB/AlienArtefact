@@ -15,6 +15,29 @@ use crate::render::{paint_edge, paint_shape, Deco};
 
 const MAX_UNDO: usize = 200;
 
+/// The categories of the palette, one icon each in the activity bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaletteView {
+    Objects,
+    Collections,
+    Pointers,
+    Relations,
+}
+
+impl PaletteView {
+    pub const ALL: [PaletteView; 4] =
+        [PaletteView::Objects, PaletteView::Collections, PaletteView::Pointers, PaletteView::Relations];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            PaletteView::Objects => "Objects",
+            PaletteView::Collections => "Collections",
+            PaletteView::Pointers => "Pointers",
+            PaletteView::Relations => "Relations",
+        }
+    }
+}
+
 pub struct App {
     pub diagram: Diagram,
     pub selection: BTreeSet<Id>,
@@ -67,6 +90,10 @@ pub struct App {
     pub link_error: Option<LinkError>,
     /// New pointers point to a const object.
     pub pointer_const: bool,
+    /// The palette category shown in the side panel; `None` = panel hidden.
+    pub palette_view: Option<PaletteView>,
+    /// The category to show again when the panel is reopened with Ctrl+B.
+    pub last_palette_view: PaletteView,
 }
 
 impl Default for App {
@@ -108,6 +135,8 @@ impl Default for App {
             link_tool: None,
             link_error: None,
             pointer_const: false,
+            palette_view: Some(PaletteView::Objects),
+            last_palette_view: PaletteView::Objects,
         }
     }
 }
@@ -121,13 +150,13 @@ impl eframe::App for App {
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::left("shapes").resizable(true).default_size(150.0).show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                // A small indent under the section titles keeps two tiles per row.
-                ui.spacing_mut().indent = 4.0;
-                self.palette(ui);
-            });
-        });
+        // VS Code-style: a strip of category icons, and the palette of the chosen category beside it.
+        // No inner margin, so the highlight bar of the shown category sits on the window's edge.
+        let strip = egui::Frame::side_top_panel(ui.style()).inner_margin(0.0);
+        egui::Panel::left("activity").resizable(false).exact_size(44.0).frame(strip).show(ui, |ui| self.activity_bar(ui));
+        if let Some(view) = self.palette_view {
+            egui::Panel::left("palette").resizable(true).default_size(130.0).show(ui, |ui| self.palette(ui, view));
+        }
         // The format panel is there only while something is selected: it edits the selection.
         let has_selection = self
             .selection
@@ -499,6 +528,9 @@ impl App {
         if key(cmd, Key::N) {
             self.new_file();
         }
+        if key(cmd, Key::B) {
+            self.toggle_palette();
+        }
         if key(cmd, Key::T) {
             self.new_tab();
         }
@@ -728,16 +760,98 @@ impl App {
         });
     }
 
-    fn palette(&mut self, ui: &mut Ui) {
-        ui.add_space(4.0);
-        self.palette_section(ui, "Objects", &ShapeKind::OBJECTS);
-        self.palette_section(ui, "Collections", &ShapeKind::COLLECTIONS);
-        self.pointer_palette(ui);
-        self.relation_palette(ui);
-        if self.link_tool.is_some() {
-            ui.add_space(4.0);
-            ui.weak("Drag from one object to another. Esc cancels.");
+    /// Shows or hides the palette panel (Ctrl+B, or a second click on the active icon).
+    pub fn toggle_palette(&mut self) {
+        match self.palette_view.take() {
+            Some(view) => self.last_palette_view = view,
+            None => self.palette_view = Some(self.last_palette_view),
         }
+    }
+
+    /// The icon strip: one icon per palette category. Clicking an icon shows that category; clicking
+    /// the shown one hides the panel.
+    fn activity_bar(&mut self, ui: &mut Ui) {
+        const ACCENT: Color32 = Color32::from_rgb(0, 120, 215);
+        ui.add_space(6.0);
+        for view in PaletteView::ALL {
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+            let shown = self.palette_view == Some(view);
+            let hint = if shown { format!("{} (click to hide)", view.title()) } else { view.title().to_owned() };
+            let resp = resp.on_hover_text(hint);
+            let painter = ui.painter();
+            if resp.hovered() {
+                painter.rect_filled(rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill);
+            }
+            if shown {
+                painter.rect_filled(Rect::from_min_size(rect.min, vec2(2.0, rect.height())), 0.0, ACCENT);
+            }
+            let col = if shown || resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
+            let icon = Rect::from_center_size(rect.center(), vec2(26.0, 20.0));
+            let stroke = Stroke::new(1.4, col);
+            match view {
+                PaletteView::Objects => {
+                    paint_shape(painter, ShapeKind::Class, icon, Color32::TRANSPARENT, stroke, 0.5, 4.0, Deco::default());
+                }
+                PaletteView::Collections => {
+                    paint_shape(painter, ShapeKind::Vector, icon, Color32::TRANSPARENT, stroke, 0.5, 4.0, Deco::default());
+                }
+                PaletteView::Pointers => {
+                    let y = icon.center().y;
+                    let pts = [Pos2::new(icon.left() - 4.0, y), Pos2::new(icon.right() + 4.0, y)];
+                    paint_edge(painter, &pts, col, 1.4, LinePattern::Solid, Head::Diamond, Head::Arrow, 0.7);
+                }
+                PaletteView::Relations => {
+                    let y = icon.center().y;
+                    let pts = [Pos2::new(icon.left() - 4.0, y), Pos2::new(icon.right() + 4.0, y)];
+                    paint_edge(painter, &pts, col, 1.4, LinePattern::Solid, Head::None, Head::HollowArrow, 0.9);
+                }
+            }
+            if resp.clicked() {
+                if shown {
+                    self.toggle_palette();
+                } else {
+                    self.palette_view = Some(view);
+                }
+            }
+        }
+    }
+
+    /// The palette panel: the shapes or lines of one category, under a header with a hide button.
+    fn palette(&mut self, ui: &mut Ui, view: PaletteView) {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.strong(view.title().to_uppercase());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // A left-pointing chevron, drawn (no icon font needed).
+                let (rect, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                let resp = resp.on_hover_text("Hide the panel (Ctrl+B)");
+                if resp.hovered() {
+                    ui.painter().rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+                }
+                let c = rect.center();
+                let col = if resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().text_color() };
+                ui.painter().add(egui::Shape::line(
+                    vec![Pos2::new(c.x + 3.0, c.y - 5.0), Pos2::new(c.x - 2.0, c.y), Pos2::new(c.x + 3.0, c.y + 5.0)],
+                    Stroke::new(1.6, col),
+                ));
+                if resp.clicked() {
+                    self.toggle_palette();
+                }
+            });
+        });
+        ui.separator();
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            match view {
+                PaletteView::Objects => self.palette_tiles(ui, &ShapeKind::OBJECTS),
+                PaletteView::Collections => self.palette_tiles(ui, &ShapeKind::COLLECTIONS),
+                PaletteView::Pointers => self.pointer_tiles(ui),
+                PaletteView::Relations => self.relation_tiles(ui),
+            }
+            if self.link_tool.is_some() {
+                ui.add_space(4.0);
+                ui.weak("Drag from one object to another. Esc cancels.");
+            }
+        });
     }
 
     /// One palette tile showing a line style with a caption; returns true when clicked.
@@ -770,10 +884,6 @@ impl App {
         }
     }
 
-    fn relation_palette(&mut self, ui: &mut Ui) {
-        section(ui, "Relations", "palette.relations", |ui| self.relation_tiles(ui));
-    }
-
     fn relation_tiles(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             self.link_tile(ui, LinkKind::Relation(RelationKind::Related), "related", "click, then drag between two objects");
@@ -793,10 +903,6 @@ impl App {
         });
     }
 
-    fn pointer_palette(&mut self, ui: &mut Ui) {
-        section(ui, "Pointers", "palette.pointers", |ui| self.pointer_tiles(ui));
-    }
-
     fn pointer_tiles(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             for kind in PointerKind::ALL {
@@ -812,10 +918,6 @@ impl App {
         });
         ui.checkbox(&mut self.pointer_const, "Points to const")
             .on_hover_text("New pointers point to a const object");
-    }
-
-    fn palette_section(&mut self, ui: &mut Ui, title: &str, kinds: &[ShapeKind]) {
-        section(ui, title, &format!("palette.{title}"), |ui| self.palette_tiles(ui, kinds));
     }
 
     fn palette_tiles(&mut self, ui: &mut Ui, kinds: &[ShapeKind]) {

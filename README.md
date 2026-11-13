@@ -40,7 +40,8 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 
 | Action | Input |
 | --- | --- |
-| Add shape | Click or drag from the Shapes panel |
+| Add shape | Click or drag from the palette (pick a category in the icon strip on the left) |
+| Show / hide the palette | Click the category's icon again, the ‹ button, or Ctrl+B |
 | Edit name / label | Double-click an object or line, or F2 |
 | Add text | Double-click empty canvas |
 | Zoom | Ctrl + mouse wheel |
