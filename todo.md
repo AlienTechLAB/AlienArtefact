@@ -48,6 +48,7 @@ The web crate does not depend on store, but `web::GameConfig` holds an `Arc<Game
 
 ## Still open: tool
 
+- **Tabs in separate OS windows.** Tabs can be docked anywhere and dragged out into floating windows, but those stay inside the app's window (the docking library, egui_stack, draws them as egui windows). Moving a tab to another monitor needs egui viewports (native windows) on top of the docking.
 - **Views.** 48 boxes fit the screen only at about 20% zoom. Needed: showing one package at a time, collapsing a box (or a package) to its header, and search.
 - **Auto-layout and routing.** Orthogonal lines run through boxes, and parallel lines overlap: the two `AccountHandler → Database` pointers draw on top of each other, labels too. Needed: a layered auto-layout (owners left of what they own) and routing that avoids boxes and separates parallel lines.
 - **Packages and dragging.** Moving a package carries the objects inside it, but dropping an object into or out of a frame is not highlighted. Membership is purely geometric.

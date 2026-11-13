@@ -998,43 +998,132 @@ pub struct Diagram {
     pub next_id: Id,
 }
 
-/// One diagram of a project, with the name shown on its tab.
+/// One diagram of a project, with the name shown on its tab (project format 1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NamedDiagram {
     pub name: String,
     pub diagram: Diagram,
 }
 
-/// A project file: several named diagrams.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProjectFile {
-    /// Format marker and version, so a project is told apart from a single diagram.
-    /// Saved as `alien_artefact_project`; files from before the rename say `architect_ai_project`.
-    #[serde(alias = "architect_ai_project")]
-    pub alien_artefact_project: u32,
-    pub diagrams: Vec<NamedDiagram>,
-    /// The tab that was shown when the project was saved.
-    #[serde(default)]
-    pub active: usize,
+/// What a tab holds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ItemContent {
+    Diagram(Diagram),
+    /// A free-text note.
+    Text(String),
+    /// A picture, by file path.
+    Image(String),
 }
 
-/// Reads a project file, or a single-diagram file from before projects existed (it becomes a
-/// one-diagram project named `fallback_name`). Older fields are migrated.
-pub fn load_project(text: &str, fallback_name: &str) -> Result<(Vec<NamedDiagram>, usize), String> {
-    let (mut diagrams, active) = match serde_json::from_str::<ProjectFile>(text) {
-        Ok(p) => (p.diagrams, p.active),
+impl ItemContent {
+    #[cfg(test)]
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            ItemContent::Diagram(_) => "diagram",
+            ItemContent::Text(_) => "text",
+            ItemContent::Image(_) => "image",
+        }
+    }
+}
+
+/// One tab of a project.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProjectItem {
+    /// Stable id; the dock layout refers to tabs by it.
+    pub id: u64,
+    pub name: String,
+    pub content: ItemContent,
+}
+
+/// The tab arrangement: splits, tab groups and floating windows, holding item ids.
+pub type Layout = egui_stack::DockState<u64>;
+
+/// A project file.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProjectFile {
+    /// Format marker and version: 1 = diagrams only, 2 = items and layout. Files from before the
+    /// rename say `architect_ai_project`.
+    #[serde(alias = "architect_ai_project")]
+    pub alien_artefact_project: u32,
+    /// Format 1: the diagrams, one tab each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagrams: Vec<NamedDiagram>,
+    /// Format 2: every tab.
+    #[serde(default)]
+    pub items: Vec<ProjectItem>,
+    /// Format 1: index of the shown diagram. Format 2: id of the active diagram.
+    #[serde(default)]
+    pub active: u64,
+    /// Format 2: where the tabs are, as RON text. (The layout holds floats that are infinite
+    /// until first drawn, which JSON cannot store; RON can.)
+    #[serde(default)]
+    pub layout: Option<String>,
+}
+
+/// The layout as stored in a project file.
+pub fn layout_to_text(layout: &Layout) -> Option<String> {
+    ron::to_string(layout).ok()
+}
+
+/// A project as loaded.
+pub struct Project {
+    pub items: Vec<ProjectItem>,
+    /// The diagram that was active, if known.
+    pub active: Option<u64>,
+    /// The tab arrangement, if the file had a usable one.
+    pub layout: Option<Layout>,
+}
+
+/// Reads a project file of any version, or a single-diagram file from before projects existed
+/// (it becomes a one-diagram project named `fallback_name`). Older fields are migrated, and a
+/// layout that does not match the items is dropped.
+pub fn load_project(text: &str, fallback_name: &str) -> Result<Project, String> {
+    let mut project = match serde_json::from_str::<ProjectFile>(text) {
+        Ok(p) if !p.items.is_empty() => Project {
+            items: p.items,
+            active: Some(p.active),
+            // An unreadable layout is not worth refusing the project for: the tabs are regrouped.
+            layout: p.layout.and_then(|text| ron::from_str::<Layout>(&text).ok()),
+        },
+        Ok(p) => {
+            // Format 1: diagrams with positional ids.
+            let items: Vec<ProjectItem> = p
+                .diagrams
+                .into_iter()
+                .enumerate()
+                .map(|(i, d)| ProjectItem { id: i as u64 + 1, name: d.name, content: ItemContent::Diagram(d.diagram) })
+                .collect();
+            Project { items, active: Some(p.active + 1), layout: None }
+        }
         Err(project_err) => match serde_json::from_str::<Diagram>(text) {
-            Ok(d) => (vec![NamedDiagram { name: fallback_name.to_owned(), diagram: d }], 0),
+            Ok(d) => Project {
+                items: vec![ProjectItem { id: 1, name: fallback_name.to_owned(), content: ItemContent::Diagram(d) }],
+                active: Some(1),
+                layout: None,
+            },
             // Report the project error unless the file clearly is a single diagram.
             Err(diagram_err) => {
-                return Err(if text.contains("alien_artefact_project") || text.contains("architect_ai_project") { project_err } else { diagram_err }.to_string())
+                let is_project = text.contains("alien_artefact_project") || text.contains("architect_ai_project");
+                return Err(if is_project { project_err } else { diagram_err }.to_string());
             }
         },
     };
-    for d in &mut diagrams {
-        d.diagram.migrate();
+    for item in &mut project.items {
+        if let ItemContent::Diagram(d) = &mut item.content {
+            d.migrate();
+        }
     }
-    Ok((diagrams, active))
+    // The layout must show exactly the items, each once.
+    if let Some(layout) = &project.layout {
+        let mut shown: Vec<u64> = layout.iter_all_tabs().map(|(_, id)| *id).collect();
+        shown.sort_unstable();
+        let mut ids: Vec<u64> = project.items.iter().map(|i| i.id).collect();
+        ids.sort_unstable();
+        if shown != ids {
+            project.layout = None;
+        }
+    }
+    Ok(project)
 }
 
 /// Subset of a diagram, used for copy/paste and duplicate.
@@ -2229,27 +2318,63 @@ mod hit_tests {
 mod project_tests {
     use super::*;
 
-    #[test]
-    fn projects_and_old_single_diagrams_both_load() {
+    fn diagram_with_class() -> Diagram {
         let mut a = Diagram::default();
         a.add_node(ShapeKind::Class, pos2(0.0, 0.0));
-        let project = ProjectFile {
-            alien_artefact_project: 1,
-            diagrams: vec![
-                NamedDiagram { name: "Server".into(), diagram: a.clone() },
-                NamedDiagram { name: "Client".into(), diagram: Diagram::default() },
-            ],
-            active: 1,
-        };
-        let (diagrams, active) = load_project(&serde_json::to_string(&project).unwrap(), "x").unwrap();
-        assert_eq!((diagrams.len(), active, diagrams[0].name.as_str()), (2, 1, "Server"));
-        assert_eq!(diagrams[0].diagram, a);
+        a
+    }
 
-        // A file saved before projects existed: one diagram, named after the file.
-        let (single, active) = load_project(&serde_json::to_string(&a).unwrap(), "old").unwrap();
-        assert_eq!((single.len(), active, single[0].name.as_str()), (1, 0, "old"));
+    #[test]
+    fn format_1_projects_and_single_diagrams_load() {
+        let a = diagram_with_class();
+        let v1 = format!(
+            r#"{{"alien_artefact_project":1,"diagrams":[{{"name":"Server","diagram":{}}},{{"name":"Client","diagram":{}}}],"active":1}}"#,
+            serde_json::to_string(&a).unwrap(),
+            serde_json::to_string(&Diagram::default()).unwrap()
+        );
+        let p = load_project(&v1, "x").unwrap();
+        assert_eq!(p.items.len(), 2);
+        assert_eq!((p.items[0].id, p.items[0].name.as_str()), (1, "Server"));
+        assert_eq!(p.items[0].content, ItemContent::Diagram(a.clone()));
+        assert_eq!(p.active, Some(2), "format 1 stored the index; ids are index + 1");
+        assert!(p.layout.is_none());
+
+        let single = load_project(&serde_json::to_string(&a).unwrap(), "old").unwrap();
+        assert_eq!((single.items.len(), single.items[0].name.as_str()), (1, "old"));
 
         assert!(load_project("{ not json", "x").is_err());
+    }
+
+    #[test]
+    fn format_2_keeps_items_and_layout() {
+        let items = vec![
+            ProjectItem { id: 7, name: "D".into(), content: ItemContent::Diagram(diagram_with_class()) },
+            ProjectItem { id: 9, name: "Notes".into(), content: ItemContent::Text("hello".into()) },
+            ProjectItem { id: 12, name: "Pic".into(), content: ItemContent::Image("a.png".into()) },
+        ];
+        let file = ProjectFile {
+            alien_artefact_project: 2,
+            diagrams: Vec::new(),
+            items: items.clone(),
+            active: 7,
+            layout: layout_to_text(&Layout::new(vec![7, 9, 12])),
+        };
+        let json = serde_json::to_string(&file).unwrap();
+        assert!(!json.contains("\"diagrams\""), "format 1 field is not written");
+        let p = load_project(&json, "x").unwrap();
+        assert_eq!(p.items, items);
+        assert_eq!(p.active, Some(7));
+        assert!(p.layout.is_some());
+
+        // A layout that lost an item is dropped (the app then puts every tab in one group).
+        let broken = ProjectFile { layout: layout_to_text(&Layout::new(vec![7, 9])), ..file.clone() };
+        let p = load_project(&serde_json::to_string(&broken).unwrap(), "x").unwrap();
+        assert!(p.layout.is_none());
+
+        // Unreadable layout text: the project still opens, without its layout.
+        let garbage = ProjectFile { layout: Some("not ron".into()), ..file };
+        let p = load_project(&serde_json::to_string(&broken).unwrap(), "x").unwrap();
+        assert!(p.layout.is_none());
     }
 }
 
@@ -2260,8 +2385,8 @@ mod rename_tests {
     #[test]
     fn projects_saved_before_the_rename_still_open() {
         let old = r#"{"architect_ai_project":1,"diagrams":[{"name":"Old","diagram":{"nodes":[],"edges":[],"next_id":0}}],"active":0}"#;
-        let (diagrams, _) = load_project(old, "x").unwrap();
-        assert_eq!(diagrams[0].name, "Old");
+        let project = load_project(old, "x").unwrap();
+        assert_eq!(project.items[0].name, "Old");
         let clip: Clip = serde_json::from_str(r#"{"architect_ai_clip":1,"nodes":[],"edges":[]}"#).unwrap();
         assert_eq!(clip.alien_artefact_clip, 1);
     }

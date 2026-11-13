@@ -23,20 +23,27 @@ fn main() -> eframe::Result {
         let loaded = std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
             .and_then(|s| model::load_project(&s, "diagram"));
-        let diagrams = match loaded {
-            Ok((diagrams, _)) => diagrams,
+        let diagrams: Vec<(String, model::Diagram)> = match loaded {
+            Ok(project) => project
+                .items
+                .into_iter()
+                .filter_map(|i| match i.content {
+                    model::ItemContent::Diagram(d) => Some((i.name, d)),
+                    _ => None,
+                })
+                .collect(),
             Err(e) => {
                 eprintln!("{path}: {e}");
                 std::process::exit(2);
             }
         };
         let mut total = 0;
-        for d in &diagrams {
-            let issues = validate::validate(&d.diagram);
+        for (name, diagram) in &diagrams {
+            let issues = validate::validate(diagram);
             for i in &issues {
                 // Name the diagram when the project has several.
                 if diagrams.len() > 1 {
-                    println!("[{}] {:<4} {}", d.name, i.rule, i.message);
+                    println!("[{name}] {:<4} {}", i.rule, i.message);
                 } else {
                     println!("{:<4} {}", i.rule, i.message);
                 }
@@ -71,6 +78,8 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_theme(egui::Theme::Light);
+            // Image tabs show PNG/JPEG files.
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             // Ctrl +/- should not scale the whole UI.
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
             let mut app = app::App::default();

@@ -95,8 +95,11 @@ impl App {
         self.diagram.node(id).map(|_| id)
     }
 
-    pub fn canvas(&mut self, ui: &mut Ui) {
+    /// Draws the active diagram and handles its input. Returns true when a mouse button was pressed
+    /// on it this frame (the workspace then keeps this diagram active).
+    pub fn canvas(&mut self, ui: &mut Ui) -> bool {
         let (rect, resp) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        let pressed = resp.hovered() && ui.input(|i| i.pointer.any_pressed());
         self.canvas_rect = rect;
         if self.fit_pending {
             self.fit_pending = false;
@@ -128,6 +131,7 @@ impl App {
         self.paint_palette_ghost(ui, pointer);
         self.text_editor(ui);
         self.context_menu(&resp, pointer);
+        pressed
     }
 
     fn handle_input(&mut self, ui: &Ui, resp: &Response, pointer: Option<Pos2>, shift: bool) {

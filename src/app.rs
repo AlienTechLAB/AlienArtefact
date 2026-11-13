@@ -8,9 +8,9 @@ use egui::{vec2, Color32, Event, Key, Modifiers, Pos2, Rect, Sense, Stroke, Ui, 
 use crate::canvas::{Drag, LinkError};
 use crate::model::{
     Clip, Diagram, EdgeStyle, Head, Id, LinePattern, LinkKind, Member, MemberKind, Node, PointerKind,
-    ProjectFile, RelationKind, ShapeKind, Visibility,
+    Project, ProjectFile, RelationKind, ShapeKind, Visibility,
 };
-use crate::tabs::Tab;
+use crate::tabs::{Content, NewKind, Tab};
 use crate::render::{paint_edge, paint_shape, Deco};
 
 const MAX_UNDO: usize = 200;
@@ -45,6 +45,13 @@ pub struct App {
     /// The tab being renamed, and the name typed so far.
     pub renaming: Option<(usize, String)>,
     pub rename_focus: bool,
+    /// Where the tabs are: groups, splits and floating windows.
+    pub dock: crate::model::Layout,
+    pub next_item_id: u64,
+    /// Diagram tabs drawn this frame and the last one, with their screen areas (for dropping a
+    /// palette shape onto the diagram under the mouse).
+    pub visible_diagrams: Vec<(u64, Rect)>,
+    pub last_visible_diagrams: Vec<(u64, Rect)>,
     title: String,
     clipboard: Option<Clip>,
     paste_count: u32,
@@ -82,11 +89,15 @@ impl Default for App {
             stable: Diagram::default(),
             saved: Diagram::default(),
             path: None,
-            tabs: vec![Tab { name: "Diagram 1".into(), state: None }],
+            tabs: vec![Tab { id: 1, name: "Diagram 1".into(), content: Content::Diagram(None) }],
             active: 0,
             saved_names: vec!["Diagram 1".into()],
             renaming: None,
             rename_focus: false,
+            dock: crate::model::Layout::new(vec![1]),
+            next_item_id: 2,
+            visible_diagrams: Vec::new(),
+            last_visible_diagrams: Vec::new(),
             title: String::new(),
             clipboard: None,
             paste_count: 0,
@@ -117,13 +128,17 @@ impl eframe::App for App {
                 self.palette(ui);
             });
         });
-        egui::Panel::right("format").resizable(true).default_size(320.0).size_range(220.0..=560.0).show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| self.format_panel(ui));
-        });
-        egui::CentralPanel::no_frame().show(ui, |ui| {
-            egui::Panel::top("tabs").show(ui, |ui| self.tab_bar(ui));
-            self.canvas(ui);
-        });
+        // The format panel is there only while something is selected: it edits the selection.
+        let has_selection = self
+            .selection
+            .iter()
+            .any(|id| self.diagram.node(*id).is_some() || self.diagram.edge(*id).is_some());
+        if has_selection {
+            egui::Panel::right("format").resizable(true).default_size(320.0).size_range(220.0..=560.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.format_panel(ui));
+            });
+        }
+        egui::CentralPanel::no_frame().show(ui, |ui| self.workspace(ui));
         self.link_error_window(&ctx);
         self.validate_window(&ctx);
 
@@ -210,7 +225,7 @@ impl App {
 
     fn new_file(&mut self) {
         if self.confirm_discard() {
-            self.reset_project(Vec::new(), 0, None);
+            self.reset_project(Project { items: Vec::new(), active: None, layout: None }, None);
             self.fit_pending = false;
             self.status = "New project".into();
         }
@@ -232,10 +247,10 @@ impl App {
             .map_err(|e| e.to_string())
             .and_then(|s| crate::model::load_project(&s, &fallback))
         {
-            Ok((diagrams, active)) => {
-                let count = diagrams.len();
-                self.status = format!("Opened {} ({count} diagram{})", path.display(), if count == 1 { "" } else { "s" });
-                self.reset_project(diagrams, active, Some(path));
+            Ok(project) => {
+                let count = project.items.len();
+                self.status = format!("Opened {} ({count} tab{})", path.display(), if count == 1 { "" } else { "s" });
+                self.reset_project(project, Some(path));
             }
             Err(e) => self.status = format!("Could not open {}: {e}", path.display()),
         }
@@ -260,7 +275,13 @@ impl App {
 
     fn write_to(&mut self, path: PathBuf) {
         self.force_commit();
-        let project = ProjectFile { alien_artefact_project: 1, diagrams: self.project_diagrams(), active: self.active };
+        let project = ProjectFile {
+            alien_artefact_project: 2,
+            diagrams: Vec::new(),
+            items: self.project_items(),
+            active: self.tabs[self.active].id,
+            layout: crate::model::layout_to_text(&self.dock),
+        };
         let json = serde_json::to_string_pretty(&project).expect("project serializes");
         match std::fs::write(&path, json) {
             Ok(()) => {
@@ -482,7 +503,9 @@ impl App {
             self.new_tab();
         }
         if key(cmd, Key::W) {
-            self.close_tab(self.active);
+            if let Some(id) = self.focused_item() {
+                self.close_item(id);
+            }
         }
         if key(cmd, Key::A) {
             self.select_all();
@@ -541,11 +564,16 @@ impl App {
                 if ui.add(egui::Button::new("New diagram").shortcut_text("Ctrl+T")).clicked() {
                     self.new_tab();
                 }
-                if ui
-                    .add_enabled(self.tabs.len() > 1, egui::Button::new("Close diagram").shortcut_text("Ctrl+W"))
-                    .clicked()
-                {
-                    self.close_tab(self.active);
+                if ui.button("New text note").clicked() {
+                    self.add_tab(NewKind::Text, None);
+                }
+                if ui.button("New image").clicked() {
+                    self.add_tab(NewKind::Image, None);
+                }
+                if ui.add(egui::Button::new("Close tab").shortcut_text("Ctrl+W")).clicked() {
+                    if let Some(id) = self.focused_item() {
+                        self.close_item(id);
+                    }
                 }
                 ui.separator();
                 if ui.add(egui::Button::new("Open...").shortcut_text("Ctrl+O")).clicked() {
@@ -839,7 +867,9 @@ impl App {
                 }
                 if resp.drag_stopped() {
                     if let Some(p) = ui.input(|i| i.pointer.latest_pos()) {
-                        if self.canvas_rect.contains(p) {
+                        // Onto whichever visible diagram is under the mouse.
+                        if let Some(i) = self.diagram_tab_at(p) {
+                            self.switch_tab(i);
                             let w = self.to_world(p);
                             self.add_node_at(kind, w);
                         }
@@ -856,18 +886,6 @@ impl App {
         let edge_ids: Vec<Id> = self.selection.iter().copied().filter(|id| self.diagram.edge(*id).is_some()).collect();
 
         if node_ids.is_empty() && edge_ids.is_empty() {
-            section(ui, "Diagram", "fmt.diagram", |ui| {
-                ui.checkbox(&mut self.show_grid, "Grid");
-                ui.checkbox(&mut self.snap, "Snap to grid (hold Alt to bypass)");
-            });
-            section(ui, "Tips", "fmt.tips", |ui| ui.weak(
-                "- Click or drag shapes from the left panel.\n\
-                 - Each tab is one diagram of the project: + adds one, double-click a tab to rename it.\n\
-                 - Pick a pointer type in the Pointers section, then drag from the owner to the pointed-to object. \
-                 Drag a selected pointer's end handles to re-attach it.\n\
-                 - Double-click an object or pointer to edit its name or label.\n\
-                 - Ctrl+wheel zooms, wheel scrolls, middle/right-drag pans.",
-            ));
             return;
         }
 
