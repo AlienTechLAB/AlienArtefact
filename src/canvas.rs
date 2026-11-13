@@ -21,6 +21,8 @@ const EDGE_HIT: f32 = 6.0;
 const SEL: Color32 = Color32::from_rgb(0, 120, 215);
 const HOVER: Color32 = Color32::from_rgb(41, 182, 242);
 const ERROR: Color32 = Color32::from_rgb(214, 39, 40);
+/// Objects and lines that break a language rule (checked all the time).
+pub const WARN: Color32 = Color32::from_rgb(255, 176, 32);
 
 /// An incorrect line waiting for the user to acknowledge the error window.
 pub struct LinkError {
@@ -471,6 +473,10 @@ impl App {
             }
         }
 
+        // Everything involved in a rule problem gets an amber marker.
+        let problems: BTreeSet<Id> =
+            crate::validate::validate(&self.diagram).into_iter().flat_map(|i| i.items).collect();
+
         // Packages first: they are frames behind the objects they hold.
         let (packages, objects): (Vec<&crate::model::Node>, Vec<&crate::model::Node>) =
             self.diagram.nodes.iter().partition(|n| n.kind == ShapeKind::Package);
@@ -491,6 +497,11 @@ impl App {
                 }
             }
             paint_shape(painter, n.kind, sr, fill, stroke, z, n.font_size * z, deco);
+            if problems.contains(&n.id) {
+                let mark = Stroke::new(1.5, WARN);
+                painter.rect_stroke(sr.expand(4.0), 3.0, Stroke::new(5.0, WARN.gamma_multiply(0.15)), StrokeKind::Middle);
+                painter.extend(Shape::dashed_line(&rect_corners(sr.expand(4.0)), mark, 5.0, 3.0));
+            }
             if self.editing != Some(n.id) {
                 let tr = self.rect_to_screen(n.text_rect());
                 paint_text(painter, tr, &self.diagram.display_text(n), n.font_size * z, tone_ink(color(n.text_color)));
@@ -524,6 +535,9 @@ impl App {
                 if glow.a() > 0 {
                     painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + extra * z.sqrt(), glow)));
                 }
+            }
+            if problems.contains(&e.id) && !invalid {
+                painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + 5.0, WARN.gamma_multiply(0.3))));
             }
             paint_edge(painter, &sp, col, e.width * z, pattern, start, end, z);
             if let Some(badge) = e.badge() {
@@ -693,4 +707,9 @@ impl App {
             .chain(self.diagram.edges.iter().map(|e| e.id))
             .collect::<BTreeSet<_>>();
     }
+}
+
+/// The closed outline of `r`, for dashed frames.
+fn rect_corners(r: egui::Rect) -> [egui::Pos2; 5] {
+    [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()]
 }

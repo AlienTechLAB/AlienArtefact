@@ -947,9 +947,9 @@ impl TabViewer for Viewer<'_> {
             };
         }
         let t = &self.app.tabs[i];
-        let dirty = if self.app.tab_dirty(t) { " *" } else { "" };
-        let active = if self.app.active == Some(i) { "\u{25cf} " } else { "" };
-        format!("{active}{}{dirty}", t.name).into()
+        // As in VS Code: a dot after the name while the tab has unsaved changes.
+        let dirty = if self.app.tab_dirty(t) { " \u{25cf}" } else { "" };
+        format!("{}{dirty}", t.name).into()
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut ItemId) {

@@ -613,7 +613,7 @@ class Settings {};                         // loaded from settings.toml (Related
 **Checked** says how the reference editor (Alien Artefact) checks each rule:
 - **drawing:** the editor refuses the drawing action and explains why.
 - **editing:** the editor does not let the value be left that way (an emptied name is put back).
-- **validate:** the **Validate** command reports it (and `alien_artefact --validate <file>` from the command line).
+- **validate:** checking the whole diagram reports it (an editor does this continuously) (and `alien_artefact --validate <file>` from the command line).
 - **–:** cannot be decided from the diagram; it applies to generated code.
 
 Unchecked rules are still part of the language, and a diagram that breaks one is not a valid blueprint.

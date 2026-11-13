@@ -156,6 +156,8 @@ pub struct App {
     pub close_answer_all: Option<bool>,
     /// Put the keyboard focus on "No" when the question appears.
     pub close_focus_no: bool,
+    /// The Preferences window is open (the main window is blocked meanwhile).
+    pub prefs_open: bool,
     pub rename_focus: bool,
     /// The last place selected in a text file's editor: which file, which lines and columns, and
     /// the text. Kept after the editor loses focus, so the selection can be referred to later.
@@ -226,6 +228,7 @@ impl Default for App {
             close_ask: None,
             close_answer_all: None,
             close_focus_no: false,
+            prefs_open: false,
             rename_focus: false,
             code_selection: None,
             tab_rects: Default::default(),
@@ -263,7 +266,10 @@ impl eframe::App for App {
             self.applied_dark = Some(self.dark);
         }
         self.handle_close(&ctx);
-        self.handle_shortcuts(&ctx);
+        // While Preferences is open the main window takes no shortcuts.
+        if !self.prefs_open {
+            self.handle_shortcuts(&ctx);
+        }
 
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
@@ -289,6 +295,9 @@ impl eframe::App for App {
         egui::CentralPanel::no_frame().show(ui, |ui| self.workspace(ui));
         self.link_error_window(&ctx);
         self.validate_window(&ctx);
+        if self.prefs_open {
+            self.preferences_window(&ctx);
+        }
 
         self.commit_undo(&ctx);
         self.update_title(&ctx);
@@ -296,6 +305,67 @@ impl eframe::App for App {
 }
 
 impl App {
+    /// The Preferences window: a separate OS window. The main window is dimmed and takes no
+    /// input until it is closed; clicking the main window brings Preferences back to the front.
+    fn preferences_window(&mut self, ctx: &egui::Context) {
+        let prefs = egui::ViewportId::from_hash_of("preferences");
+        let screen = ctx.content_rect();
+        egui::Area::new(egui::Id::unique("prefs_blocker"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let r = ui.allocate_rect(screen, Sense::click_and_drag());
+                ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha(120));
+                if r.clicked() || r.drag_started() {
+                    ctx.send_viewport_cmd_to(prefs, ViewportCommand::Focus);
+                }
+            });
+
+        // Keep it in front: whenever the main window gets the focus, give it back.
+        if ctx.input(|i| i.viewport().focused) == Some(true) {
+            ctx.send_viewport_cmd_to(prefs, ViewportCommand::Focus);
+        }
+        let size = vec2(420.0, 280.0);
+        let mut builder = egui::ViewportBuilder::default()
+            .with_title("Preferences")
+            .with_inner_size(size)
+            .with_taskbar(false)
+            .with_resizable(false)
+            .with_minimize_button(false)
+            .with_maximize_button(false);
+        // Centred over the main window.
+        if let Some(main) = ctx.input(|i| i.viewport().outer_rect) {
+            builder = builder.with_position(main.center() - size / 2.0);
+        }
+        let mut close = false;
+        ctx.show_viewport_immediate(prefs, builder, |ui, _class| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.heading("Preferences");
+                ui.add_space(8.0);
+                ui.strong("Appearance");
+                ui.checkbox(&mut self.dark, "Dark theme");
+                ui.add_space(8.0);
+                ui.strong("Diagrams");
+                ui.checkbox(&mut self.show_grid, "Show grid");
+                ui.checkbox(&mut self.snap, "Snap to grid");
+                ui.add_space(12.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                });
+            });
+            if ui.input(|i| i.viewport().close_requested() || i.key_pressed(egui::Key::Escape)) {
+                close = true;
+            }
+        });
+        if close {
+            self.prefs_open = false;
+            // The main window is active again.
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, ViewportCommand::Focus);
+        }
+    }
+
     // ---------------------------------------------------------------- history
 
     fn commit_undo(&mut self, ctx: &egui::Context) {
@@ -489,7 +559,7 @@ impl App {
         let issues = crate::validate::validate(&self.diagram);
         let mut open = true;
         let mut pick: Option<Vec<Id>> = None;
-        egui::Window::new(format!("Validate - {} problem(s)", issues.len()))
+        egui::Window::new(format!("Problems ({})", issues.len()))
             .id(egui::Id::unique("validate_window"))
             .open(&mut open)
             .default_width(460.0)
@@ -747,6 +817,12 @@ impl App {
                     self.export_svg();
                 }
                 ui.separator();
+                if ui.button("Preferences...").clicked() {
+                    self.prefs_open = true;
+                    // Nothing in the main window keeps the keyboard meanwhile.
+                    ui.ctx().memory_mut(|m| m.stop_text_input());
+                }
+                ui.separator();
                 if ui.button("Exit").clicked() {
                     ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                 }
@@ -835,8 +911,19 @@ impl App {
             used |= ui.checkbox(&mut self.show_grid, "Grid").changed();
             used |= ui.checkbox(&mut self.snap, "Snap").changed();
             ui.separator();
-            if ui.button("Validate").on_hover_text("Check the whole diagram against the language rules").clicked() {
-                self.validate_open = true;
+            // The diagram is checked against the language rules all the time; this shows the
+            // result and opens the list of problems.
+            let problems = crate::validate::validate(&self.diagram).len();
+            let (text, color) = if problems == 0 {
+                ("\u{2714} No problems".to_owned(), Color32::from_rgb(90, 200, 120))
+            } else {
+                let s = if problems == 1 { "" } else { "s" };
+                (format!("\u{26a0} {problems} problem{s}"), crate::canvas::WARN)
+            };
+            let hint = if problems == 0 { "The diagram follows every rule the editor checks" } else { "Show the problems" };
+            let r = ui.add(egui::Button::new(egui::RichText::new(text).color(color)).frame(false)).on_hover_text(hint);
+            if r.clicked() {
+                self.validate_open = !self.validate_open;
                 used = true;
             }
         });
