@@ -27,7 +27,7 @@ The first pass over the server found these gaps. They are now in the language an
 | `pub(crate)` | **internal** visibility `~` (3.4) |
 | `Option<Arc<Store>>` vs. always set | pointer **never null** `[1]` (4.6) |
 | Library types (`tokio::sync::Notify`) | **External type** object (3.8) |
-| Whole-diagram rule check | **Validate** (toolbar, Diagram menu, and `architect_ai --validate <file>`) |
+| Whole-diagram rule check | **Validate** (toolbar, Diagram menu, and `alien_artefact --validate <file>`) |
 
 ### What the Validate run found in the server
 

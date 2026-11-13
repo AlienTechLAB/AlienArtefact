@@ -1009,7 +1009,9 @@ pub struct NamedDiagram {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectFile {
     /// Format marker and version, so a project is told apart from a single diagram.
-    pub architect_ai_project: u32,
+    /// Saved as `alien_artefact_project`; files from before the rename say `architect_ai_project`.
+    #[serde(alias = "architect_ai_project")]
+    pub alien_artefact_project: u32,
     pub diagrams: Vec<NamedDiagram>,
     /// The tab that was shown when the project was saved.
     #[serde(default)]
@@ -1025,7 +1027,7 @@ pub fn load_project(text: &str, fallback_name: &str) -> Result<(Vec<NamedDiagram
             Ok(d) => (vec![NamedDiagram { name: fallback_name.to_owned(), diagram: d }], 0),
             // Report the project error unless the file clearly is a single diagram.
             Err(diagram_err) => {
-                return Err(if text.contains("architect_ai_project") { project_err } else { diagram_err }.to_string())
+                return Err(if text.contains("alien_artefact_project") || text.contains("architect_ai_project") { project_err } else { diagram_err }.to_string())
             }
         },
     };
@@ -1039,7 +1041,8 @@ pub fn load_project(text: &str, fallback_name: &str) -> Result<(Vec<NamedDiagram
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Clip {
     /// Marker so arbitrary JSON in the clipboard isn't mistaken for a clip.
-    pub architect_ai_clip: u32,
+    #[serde(alias = "architect_ai_clip")]
+    pub alien_artefact_clip: u32,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
 }
@@ -1488,7 +1491,7 @@ impl Diagram {
         let ends_inside = |e: &Edge| [e.from, e.to].iter().all(|end| end.node().is_none_or(|n| ids.contains(&n)));
         let attached = |e: &Edge| e.from.node().is_some() || e.to.node().is_some();
         Clip {
-            architect_ai_clip: 1,
+            alien_artefact_clip: 1,
             nodes: self.nodes.iter().filter(|n| ids.contains(&n.id)).cloned().collect(),
             edges: self
                 .edges
@@ -2231,7 +2234,7 @@ mod project_tests {
         let mut a = Diagram::default();
         a.add_node(ShapeKind::Class, pos2(0.0, 0.0));
         let project = ProjectFile {
-            architect_ai_project: 1,
+            alien_artefact_project: 1,
             diagrams: vec![
                 NamedDiagram { name: "Server".into(), diagram: a.clone() },
                 NamedDiagram { name: "Client".into(), diagram: Diagram::default() },
@@ -2247,5 +2250,19 @@ mod project_tests {
         assert_eq!((single.len(), active, single[0].name.as_str()), (1, 0, "old"));
 
         assert!(load_project("{ not json", "x").is_err());
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    #[test]
+    fn projects_saved_before_the_rename_still_open() {
+        let old = r#"{"architect_ai_project":1,"diagrams":[{"name":"Old","diagram":{"nodes":[],"edges":[],"next_id":0}}],"active":0}"#;
+        let (diagrams, _) = load_project(old, "x").unwrap();
+        assert_eq!(diagrams[0].name, "Old");
+        let clip: Clip = serde_json::from_str(r#"{"architect_ai_clip":1,"nodes":[],"edges":[]}"#).unwrap();
+        assert_eq!(clip.alien_artefact_clip, 1);
     }
 }

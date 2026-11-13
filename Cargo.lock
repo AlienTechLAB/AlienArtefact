@@ -146,6 +146,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alien_artefact"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "rfd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -204,17 +215,6 @@ dependencies = [
  "windows-sys 0.61.2",
  "wl-clipboard-rs",
  "x11rb",
-]
-
-[[package]]
-name = "architect_ai"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui",
- "rfd",
- "serde",
- "serde_json",
 ]
 
 [[package]]

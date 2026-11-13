@@ -607,9 +607,9 @@ class Settings {};                         // loaded from settings.toml (Related
 
 ## 8. Rule index
 
-**Checked** says how the reference editor (architect.ai) checks each rule:
+**Checked** says how the reference editor (Alien Artefact) checks each rule:
 - **drawing:** the editor refuses the drawing action and explains why.
-- **validate:** the **Validate** command reports it (and `architect_ai --validate <file>` from the command line).
+- **validate:** the **Validate** command reports it (and `alien_artefact --validate <file>` from the command line).
 - **–:** cannot be decided from the diagram; it applies to generated code.
 
 Unchecked rules are still part of the language, and a diagram that breaks one is not a valid blueprint.

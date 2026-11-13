@@ -1,4 +1,4 @@
-# architect.ai
+# Alien Artefact
 
 A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/egui](https://crates.io/crates/eframe), modelled on the draw.io workflow.
 
@@ -10,7 +10,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 - Enums (variants, flags), external types, packages (frames for crates/modules) and directories
 - Object properties: type parameters, scope (singleton / per request / per session), task (with period), generated; members can be async, repeated (×N), internal (~)
 - Uses relation (calls / package dependencies); pointer lock (mutex / rwlock) and never-null [1]
-- Validate: checks the whole diagram against the language rules (Diagram > Validate, or `architect_ai --validate file.json`)
+- Validate: checks the whole diagram against the language rules (Diagram > Validate, or `alien_artefact --validate file.json`)
 - Shapes: rectangle, rounded rectangle, ellipse, diamond, triangle, hexagon, parallelogram, cylinder, text
 - Select (click, Shift+click, rubber band), move with grid snapping, resize via handles
 - Pointers (palette section): drag from the owner to the pointed-to object. Each kind has a fixed look:

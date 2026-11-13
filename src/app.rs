@@ -260,7 +260,7 @@ impl App {
 
     fn write_to(&mut self, path: PathBuf) {
         self.force_commit();
-        let project = ProjectFile { architect_ai_project: 1, diagrams: self.project_diagrams(), active: self.active };
+        let project = ProjectFile { alien_artefact_project: 1, diagrams: self.project_diagrams(), active: self.active };
         let json = serde_json::to_string_pretty(&project).expect("project serializes");
         match std::fs::write(&path, json) {
             Ok(()) => {
@@ -294,7 +294,7 @@ impl App {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled".into());
         let title = format!(
-            "{name}{} \u{2014} {} - architect.ai",
+            "{name}{} \u{2014} {} - Alien Artefact",
             if self.dirty() { "*" } else { "" },
             self.active_tab_name()
         );
