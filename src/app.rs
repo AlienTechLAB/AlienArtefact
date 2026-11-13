@@ -147,6 +147,15 @@ pub struct App {
     pub saved_names: Vec<String>,
     /// The tab being renamed, and the name typed so far.
     pub renaming: Option<(usize, String)>,
+    /// Tabs waiting to be closed, in order (one question at a time for unsaved ones).
+    pub close_queue: Vec<u64>,
+    /// The unsaved tab being asked about: its id, and the "apply to other unsaved tabs" box.
+    pub close_ask: Option<(u64, bool)>,
+    /// The answer given with "apply to other unsaved tabs" ticked, for the rest of the queue:
+    /// `Some(true)` closes them without asking, `Some(false)` keeps them.
+    pub close_answer_all: Option<bool>,
+    /// Put the keyboard focus on "No" when the question appears.
+    pub close_focus_no: bool,
     pub rename_focus: bool,
     /// The last place selected in a text file's editor: which file, which lines and columns, and
     /// the text. Kept after the editor loses focus, so the selection can be referred to later.
@@ -213,6 +222,10 @@ impl Default for App {
             active: Some(0),
             saved_names: vec!["Diagram 1".into()],
             renaming: None,
+            close_queue: Vec::new(),
+            close_ask: None,
+            close_answer_all: None,
+            close_focus_no: false,
             rename_focus: false,
             code_selection: None,
             tab_rects: Default::default(),
@@ -711,8 +724,8 @@ impl App {
                 if ui.button("New text file").clicked() {
                     self.add_tab(NewKind::Text, None);
                 }
-                if ui.button("New image").clicked() {
-                    self.add_tab(NewKind::Image, None);
+                if ui.button("Open image...").clicked() {
+                    self.open_image();
                 }
                 if ui.add(egui::Button::new("Close tab").shortcut_text("Ctrl+W")).clicked() {
                     if let Some(id) = self.focused_item() {
@@ -786,20 +799,6 @@ impl App {
                 ui.checkbox(&mut self.snap, "Snap to grid");
                 ui.checkbox(&mut self.dark, "Dark theme");
             });
-            ui.menu_button("Diagram", |ui| {
-                if ui.button("Validate").on_hover_text("Check the whole diagram against the language rules").clicked() {
-                    self.validate_open = true;
-                }
-            });
-            ui.menu_button("Arrange", |ui| {
-                let has_sel = !self.selection.is_empty();
-                if ui.add_enabled(has_sel, egui::Button::new("To front")).clicked() {
-                    self.diagram.reorder(&self.selection, true);
-                }
-                if ui.add_enabled(has_sel, egui::Button::new("To back")).clicked() {
-                    self.diagram.reorder(&self.selection, false);
-                }
-            });
         });
     }
 
@@ -835,6 +834,11 @@ impl App {
             ui.separator();
             used |= ui.checkbox(&mut self.show_grid, "Grid").changed();
             used |= ui.checkbox(&mut self.snap, "Snap").changed();
+            ui.separator();
+            if ui.button("Validate").on_hover_text("Check the whole diagram against the language rules").clicked() {
+                self.validate_open = true;
+                used = true;
+            }
         });
         ui.separator();
         used

@@ -103,9 +103,22 @@ impl Tab {
 }
 
 /// Changes to the tab list asked for while the dock is being drawn, applied after it.
+/// Which tabs of a tab's group a close command closes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseWhich {
+    This,
+    /// The tabs to its right / left in its group.
+    Right,
+    Left,
+    /// Every other tab of its group.
+    Others,
+    /// Every tab of its group.
+    All,
+}
+
 pub enum Pending {
     Add(NewKind, Option<NodePath>),
-    Closed(ItemId),
+    Close(ItemId, CloseWhich),
     Activate(ItemId),
     Duplicate(ItemId),
     Rename(ItemId),
@@ -280,6 +293,11 @@ impl App {
             self.dock.set_focused_node_and_surface(path);
         }
         self.dock.push_to_focused_leaf(id);
+        // The new tab is the one shown and focused.
+        if let Some(path) = self.dock.find_tab(&id) {
+            let _ = self.dock.set_active_tab(path);
+            self.dock.set_focused_node_and_surface(path.node_path());
+        }
         if kind == NewKind::Diagram {
             self.switch_tab(self.tabs.len() - 1);
         }
@@ -316,35 +334,166 @@ impl App {
         self.add_node_at(kind, middle + vec2(1.0, 1.0) * (n % 8.0) * 10.0);
     }
 
+    /// Asks for a PNG or JPEG file and shows it in a new tab named after the file.
+    pub fn open_image(&mut self) {
+        let Some(p) = rfd::FileDialog::new().add_filter("Image", &["png", "jpg", "jpeg"]).pick_file() else { return };
+        self.open_image_path(p);
+    }
+
+    pub fn open_image_path(&mut self, p: std::path::PathBuf) {
+        let id = self.add_tab(NewKind::Image, None);
+        let i = self.index_of(id).expect("just added");
+        if let Some(name) = p.file_name() {
+            self.tabs[i].name = name.to_string_lossy().into_owned();
+        }
+        self.tabs[i].content = Content::Image { path: p.display().to_string(), saved: String::new() };
+        self.status = format!("Opened image {}", p.display());
+    }
+
     pub fn new_tab(&mut self) {
         self.add_tab(NewKind::Diagram, None);
     }
 
-    fn has_content(&self, i: usize) -> bool {
-        match &self.tabs[i].content {
-            Content::Diagram(Some(s)) => !s.diagram.nodes.is_empty() || !s.diagram.edges.is_empty(),
-            Content::Diagram(None) => !self.diagram.nodes.is_empty() || !self.diagram.edges.is_empty(),
-            Content::Text { text, .. } => !text.trim().is_empty(),
-            Content::Image { path, .. } => !path.trim().is_empty(),
-            // Its text belongs to the diagram; closing the tab loses nothing.
-            Content::FileText { .. } => false,
+    /// Whether closing tab `i` loses unsaved changes, so the user is asked first. An image only
+    /// shows a file on disk, so nothing is lost.
+    fn close_needs_asking(&self, i: usize) -> bool {
+        !matches!(self.tabs[i].content, Content::Image { .. }) && self.tab_dirty(&self.tabs[i])
+    }
+
+    /// The tabs a close command on tab `id` closes, in the order of its group.
+    pub fn tabs_to_close(&self, id: ItemId, which: CloseWhich) -> Vec<ItemId> {
+        if which == CloseWhich::This {
+            return vec![id];
+        }
+        let Some(path) = self.dock.find_tab(&id) else { return vec![id] };
+        let Ok(leaf) = self.dock.leaf(path.node_path()) else { return vec![id] };
+        let tabs = leaf.tabs();
+        let at = tabs.iter().position(|t| *t == id).unwrap_or(0);
+        let picked: Vec<ItemId> = match which {
+            CloseWhich::This => unreachable!(),
+            CloseWhich::Right => tabs[at + 1..].to_vec(),
+            CloseWhich::Left => tabs[..at].to_vec(),
+            CloseWhich::Others => tabs.iter().copied().filter(|t| *t != id).collect(),
+            CloseWhich::All => tabs.to_vec(),
+        };
+        picked
+    }
+
+    /// Queues tabs for closing; unsaved ones are asked about one at a time.
+    pub fn request_close(&mut self, ids: Vec<ItemId>) {
+        if self.close_queue.is_empty() && self.close_ask.is_none() {
+            self.close_answer_all = None;
+        }
+        for id in ids {
+            if !self.close_queue.contains(&id) {
+                self.close_queue.push(id);
+            }
+        }
+        self.process_closes();
+    }
+
+    /// Closes queued tabs until one needs asking: that tab is brought forward and the question
+    /// shown (see `close_dialog`).
+    fn process_closes(&mut self) {
+        while self.close_ask.is_none() {
+            let Some(&id) = self.close_queue.first() else {
+                self.close_answer_all = None;
+                return;
+            };
+            let Some(i) = self.index_of(id) else {
+                self.close_queue.remove(0);
+                continue;
+            };
+            if self.close_needs_asking(i) {
+                match self.close_answer_all {
+                    Some(true) => {}
+                    Some(false) => {
+                        self.close_queue.remove(0);
+                        continue;
+                    }
+                    None => {
+                        self.bring_forward(id);
+                        self.close_ask = Some((id, false));
+                        self.close_focus_no = true;
+                        return;
+                    }
+                }
+            }
+            self.close_queue.remove(0);
+            self.remove_tab_now(id);
         }
     }
 
-    /// Asks before closing a tab with contents. True when it may go.
-    fn confirm_close(&self, i: usize) -> bool {
-        if !self.has_content(i) {
-            return true;
+    /// Shows tab `id` in its group, focused (and active, for a diagram).
+    fn bring_forward(&mut self, id: ItemId) {
+        if let Some(path) = self.dock.find_tab(&id) {
+            let _ = self.dock.set_active_tab(path);
+            self.dock.set_focused_node_and_surface(path.node_path());
         }
-        rfd::MessageDialog::new()
-            .set_title("Close tab")
-            .set_description(format!(
-                "Close \"{}\"? Its contents are removed from the project (this cannot be undone).",
-                self.tabs[i].name
-            ))
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show()
-            == rfd::MessageDialogResult::Yes
+        if let Some(i) = self.index_of(id) {
+            self.switch_tab(i);
+        }
+    }
+
+    fn remove_tab_now(&mut self, id: ItemId) {
+        if let Some(path) = self.dock.find_tab(&id) {
+            self.dock.remove_tab(path);
+        }
+        self.forget_tab(id);
+    }
+
+    /// The user's answer about the unsaved tab asked about: close it (`yes`) or keep it. With
+    /// `apply_to_rest`, the same answer is used for the other unsaved tabs being closed.
+    pub fn answer_close(&mut self, yes: bool, apply_to_rest: bool) {
+        let Some((id, _)) = self.close_ask.take() else { return };
+        self.close_queue.retain(|t| *t != id);
+        if yes {
+            self.remove_tab_now(id);
+        }
+        if apply_to_rest {
+            self.close_answer_all = Some(yes);
+        }
+        self.process_closes();
+    }
+
+    /// The question for an unsaved tab: Yes / No (No has the focus, so Enter keeps the tab) and
+    /// "Apply to other unsaved tabs".
+    fn close_dialog(&mut self, ctx: &egui::Context) {
+        let Some((id, mut apply)) = self.close_ask else { return };
+        let Some(i) = self.index_of(id) else {
+            self.close_ask = None;
+            self.process_closes();
+            return;
+        };
+        let name = self.tabs[i].name.clone();
+        let others = self.close_queue.iter().filter(|t| **t != id).count();
+        let mut answer = None;
+        egui::Modal::new(egui::Id::unique("close_unsaved")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.heading("Unsaved changes");
+            ui.add_space(6.0);
+            ui.label(format!("\"{name}\" has unsaved changes. Do you really want to close it?"));
+            ui.add_space(6.0);
+            ui.add_enabled(others > 0, egui::Checkbox::new(&mut apply, "Apply to other unsaved tabs"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Yes").clicked() {
+                    answer = Some(true);
+                }
+                let no = ui.button("No");
+                if self.close_focus_no {
+                    no.request_focus();
+                    self.close_focus_no = false;
+                }
+                if no.clicked() || ui.input(|inp| inp.key_pressed(egui::Key::Escape)) {
+                    answer = Some(false);
+                }
+            });
+        });
+        match answer {
+            Some(yes) => self.answer_close(yes, apply),
+            None => self.close_ask = Some((id, apply)),
+        }
     }
 
     /// Removes tab `id` from the project (the dock no longer shows it).
@@ -366,16 +515,9 @@ impl App {
         self.status = format!("Closed \"{name}\"");
     }
 
-    /// Closes tab `id`, asking first if it has contents (Ctrl+W, menu).
+    /// Closes tab `id`, asking first if it has unsaved changes (Ctrl+W, menu).
     pub fn close_item(&mut self, id: ItemId) {
-        let Some(i) = self.index_of(id) else { return };
-        if !self.confirm_close(i) {
-            return;
-        }
-        if let Some(path) = self.dock.find_tab(&id) {
-            self.dock.remove_tab(path);
-        }
-        self.forget_tab(id);
+        self.request_close(vec![id]);
     }
 
     /// The tab focused in the dock (the one Ctrl+W closes).
@@ -537,7 +679,9 @@ impl App {
         let mut dock = std::mem::replace(&mut self.dock, Layout::new(Vec::new()));
         let mut pending = Vec::new();
         self.tab_rects.clear();
-        let style = Style::from_egui(ui.style().as_ref());
+        let mut style = Style::from_egui(ui.style().as_ref());
+        // The + button right after the last tab, as in a browser.
+        style.buttons.add_tab_align = egui_stack::TabAddAlign::Left;
         {
             let mut viewer = Viewer { app: self, pending: &mut pending };
             DockArea::new(&mut dock)
@@ -548,6 +692,8 @@ impl App {
                 // The + button opens `add_popup` (Diagram, Text file, Image) rather than calling `on_add`.
                 .show_add_popup(true)
                 .show_leaf_close_all_buttons(false)
+                // Our own tab menu (Rename, Duplicate, the Close commands) instead of Eject/Close.
+                .show_builtin_tab_menu(false)
                 .show_inside(ui, &mut viewer);
         }
         self.dock = dock;
@@ -570,7 +716,10 @@ impl App {
                 Pending::Add(kind, group) => {
                     self.add_tab(kind, group);
                 }
-                Pending::Closed(id) => self.forget_tab(id),
+                Pending::Close(id, which) => {
+                    let ids = self.tabs_to_close(id, which);
+                    self.request_close(ids);
+                }
                 Pending::Activate(id) => {
                     if let Some(i) = self.index_of(id) {
                         self.switch_tab(i);
@@ -591,6 +740,7 @@ impl App {
             }
         }
         self.rename_window(ui.ctx());
+        self.close_dialog(ui.ctx());
     }
 
     /// Renaming a tab in place (double-click on a tab, or its context menu): a text field drawn
@@ -748,19 +898,16 @@ impl App {
 
     fn show_image(&mut self, i: usize, ui: &mut Ui) {
         let id = self.tabs[i].id;
-        let Content::Image { path, .. } = &mut self.tabs[i].content else { return };
+        let name = self.tabs[i].name.clone();
+        let Content::Image { path, .. } = &self.tabs[i].content else { return };
+        // The same strip as a file's: its name, and where it is on disk.
         ui.horizontal(|ui| {
-            ui.label("File");
-            if ui.button("Choose...").clicked() {
-                if let Some(p) = rfd::FileDialog::new().add_filter("Image", &["png", "jpg", "jpeg"]).pick_file() {
-                    *path = p.display().to_string();
-                }
-            }
-            ui.add(egui::TextEdit::singleline(path).hint_text("path to a .png or .jpg").desired_width(f32::INFINITY));
+            ui.strong(&name);
+            ui.weak(path.as_str());
         });
         ui.separator();
         if path.trim().is_empty() {
-            ui.weak("No picture yet: choose a PNG or JPEG file.");
+            ui.weak("No image file.");
             return;
         }
         let uri = file_uri(path.trim());
@@ -822,6 +969,19 @@ impl TabViewer for Viewer<'_> {
         if ui.button("Duplicate").clicked() {
             self.pending.push(Pending::Duplicate(*tab));
         }
+        ui.separator();
+        for (label, which) in [
+            ("Close", CloseWhich::This),
+            ("Close to the right", CloseWhich::Right),
+            ("Close to the left", CloseWhich::Left),
+            ("Close all except this", CloseWhich::Others),
+            ("Close all", CloseWhich::All),
+        ] {
+            if ui.button(label).clicked() {
+                self.pending.push(Pending::Close(*tab, which));
+                ui.close();
+            }
+        }
     }
 
     fn on_tab_button(&mut self, tab: &mut ItemId, response: &egui::Response) {
@@ -835,12 +995,9 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn on_close(&mut self, tab: &mut ItemId) -> OnCloseResponse {
-        let Some(i) = self.app.index_of(*tab) else { return OnCloseResponse::Close };
-        if !self.app.confirm_close(i) {
-            return OnCloseResponse::Ignore;
-        }
-        self.pending.push(Pending::Closed(*tab));
-        OnCloseResponse::Close
+        // The app closes it (after asking, if it is unsaved), not the dock.
+        self.pending.push(Pending::Close(*tab, CloseWhich::This));
+        OnCloseResponse::Ignore
     }
 
     fn add_popup(&mut self, ui: &mut Ui, path: NodePath) {
@@ -848,9 +1005,12 @@ impl TabViewer for Viewer<'_> {
         ui.set_width(150.0);
         ui.painter().rect_filled(ui.max_rect().expand(6.0), 0.0, ui.ctx().global_style().visuals.panel_fill);
         ui.spacing_mut().item_spacing.y = 2.0;
-        for (label, kind) in [("Diagram", NewKind::Diagram), ("Text file", NewKind::Text), ("Image", NewKind::Image)] {
+        // Images are not made here; they are opened from a file (File > Open image).
+        for (label, kind) in [("Diagram", NewKind::Diagram), ("Text file", NewKind::Text)] {
             if crate::app::rect_button(ui, label, false).clicked() {
                 self.pending.push(Pending::Add(kind, Some(path)));
+                // The dock's popup closes only on clicks outside it; choosing closes it too.
+                ui.close();
             }
         }
     }
@@ -896,10 +1056,13 @@ mod tests {
     fn text_and_image_tabs_are_not_diagrams() {
         let mut app = app_with_tabs();
         let text = app.add_tab(NewKind::Text, None);
-        let image = app.add_tab(NewKind::Image, None);
+        app.open_image_path(std::path::PathBuf::from("pics/robot.png"));
+        let image = app.tabs.last().unwrap().id;
+        assert_eq!(app.tabs.last().unwrap().name, "robot.png", "an opened image is named after its file");
         assert_eq!(app.tabs.len(), 4);
-        assert_eq!(app.active, Some(1), "adding a note or image keeps the active diagram");
+        assert_eq!(app.active, Some(1), "adding a text file or image keeps the active diagram");
         assert_eq!(app.dock.iter_all_tabs().count(), 4, "every tab is in the layout");
+        assert_eq!(app.focused_item(), Some(image), "the newest tab is the focused one");
         assert!(!app.tabs[app.index_of(text).unwrap()].is_diagram());
 
         // Switching to a non-diagram does nothing.
@@ -1010,6 +1173,54 @@ mod tests {
         app.add_shape_from_palette(ShapeKind::Trait);
         assert_eq!(app.dock.iter_all_tabs().count(), 1, "a new diagram tab is shown");
         assert_eq!((app.active, app.diagram.nodes.len()), (Some(0), 1));
+    }
+
+    #[test]
+    fn closing_asks_about_unsaved_tabs_one_at_a_time() {
+        let mut app = App::default();
+        app.start_empty();
+        let a = app.add_tab(NewKind::Text, None);
+        let b = app.add_tab(NewKind::Text, None);
+        let c = app.add_tab(NewKind::Text, None);
+        let d = app.add_tab(NewKind::Text, None);
+        for id in [b, d] {
+            let i = app.index_of(id).unwrap();
+            let Content::Text { text, .. } = &mut app.tabs[i].content else { panic!() };
+            text.push_str("unsaved");
+        }
+        assert_eq!(app.tabs_to_close(c, CloseWhich::Right), vec![d]);
+        assert_eq!(app.tabs_to_close(c, CloseWhich::Left), vec![a, b]);
+        assert_eq!(app.tabs_to_close(c, CloseWhich::Others), vec![a, b, d]);
+
+        // Close all: a goes at once, b (unsaved) is brought forward and asked about.
+        app.request_close(app.tabs_to_close(c, CloseWhich::All));
+        assert_eq!(app.close_ask, Some((b, false)));
+        assert_eq!(app.focused_item(), Some(b));
+        assert!(app.index_of(a).is_none() && app.index_of(b).is_some());
+
+        // "No" keeps b; c (saved) closes; d is asked about next.
+        app.answer_close(false, false);
+        assert!(app.index_of(b).is_some() && app.index_of(c).is_none());
+        assert_eq!(app.close_ask, Some((d, false)));
+        app.answer_close(true, false);
+        assert_eq!(app.tabs.iter().map(|t| t.id).collect::<Vec<_>>(), vec![b]);
+        assert!(app.close_ask.is_none() && app.close_queue.is_empty());
+    }
+
+    #[test]
+    fn yes_with_apply_to_others_closes_the_rest_without_asking() {
+        let mut app = App::default();
+        app.start_empty();
+        let ids: Vec<ItemId> = (0..3).map(|_| app.add_tab(NewKind::Text, None)).collect();
+        for t in &mut app.tabs {
+            let Content::Text { text, .. } = &mut t.content else { panic!() };
+            text.push_str("unsaved");
+        }
+        app.request_close(ids.clone());
+        assert_eq!(app.close_ask, Some((ids[0], false)));
+        app.answer_close(true, true);
+        assert!(app.tabs.is_empty() && app.close_ask.is_none());
+        assert_eq!(app.close_answer_all, None, "the answer is forgotten once the closing is done");
     }
 
     #[test]
