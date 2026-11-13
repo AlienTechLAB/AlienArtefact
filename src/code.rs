@@ -147,9 +147,10 @@ pub type LineCol = (usize, usize);
 /// The app keeps the last one so it can be referred to later (e.g. when asking an AI about it).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeSelection {
-    /// The diagram tab holding the file, and the file object in it.
-    pub diagram: u64,
-    pub node: u64,
+    /// Where the text is: a text file tab (`node` is `None`), or the diagram tab holding a file
+    /// object and that object.
+    pub item: u64,
+    pub node: Option<u64>,
     /// The file's name when the selection was made.
     pub file: String,
     pub start: LineCol,
@@ -215,10 +216,10 @@ pub fn line_col(text: &str, index: usize) -> LineCol {
 }
 
 /// The selection between character indices `a` and `b` (either order) of `text`.
-pub fn selection_of(text: &str, a: usize, b: usize, file: &str, diagram: u64, node: u64) -> CodeSelection {
+pub fn selection_of(text: &str, a: usize, b: usize, file: &str, item: u64, node: Option<u64>) -> CodeSelection {
     let (from, to) = (a.min(b), a.max(b));
     CodeSelection {
-        diagram,
+        item,
         node,
         file: file.to_owned(),
         start: line_col(text, from),
@@ -305,18 +306,18 @@ mod tests {
     #[test]
     fn selections_know_their_lines_and_columns() {
         let text = "fn main() {\n    let x = 1;\n}\n";
-        let cursor = selection_of(text, 16, 16, "main.rs", 1, 2);
+        let cursor = selection_of(text, 16, 16, "main.rs", 1, Some(2));
         assert_eq!((cursor.start, cursor.line_count()), ((2, 5), 0));
         assert_eq!(cursor.reference(), "main.rs:2:5");
         assert_eq!(cursor.status(), "Ln 2, Col 5");
 
         // "let x" on line 2, selected backwards.
-        let s = selection_of(text, 21, 16, "main.rs", 1, 2);
+        let s = selection_of(text, 21, 16, "main.rs", 1, Some(2));
         assert_eq!((s.start, s.end, s.text.as_str()), ((2, 5), (2, 10), "let x"));
         assert_eq!((s.line_count(), s.reference()), (1, "main.rs:2:5-2:10".to_owned()));
 
         // Whole lines 1-2: ending at the start of line 3 does not count line 3.
-        let s = selection_of(text, 0, 27, "main.rs", 1, 2);
+        let s = selection_of(text, 0, 27, "main.rs", 1, Some(2));
         assert_eq!((s.end, s.line_count()), ((3, 1), 2));
         assert_eq!(s.status(), "Ln 3, Col 1  (2 lines, 27 characters selected)");
     }

@@ -1,4 +1,4 @@
-//! The workspace: a project's tabs (diagrams, text notes, images) arranged by a docking layout.
+//! The workspace: a project's tabs (diagrams, text files, images) arranged by a docking layout.
 //!
 //! Tabs can be dragged into other tab groups, to any edge of a group (splitting it, as in VS Code),
 //! or out into floating windows. The layout is saved with the project.
@@ -84,7 +84,7 @@ impl NewKind {
     fn base_name(self) -> &'static str {
         match self {
             NewKind::Diagram => "Diagram",
-            NewKind::Text => "Notes",
+            NewKind::Text => "Text file",
             NewKind::Image => "Image",
         }
     }
@@ -250,6 +250,12 @@ impl App {
         (1..).map(|k| format!("{base} {k}")).find(|n| !taken(n)).unwrap()
     }
 
+    /// `untitled-1.txt`, `untitled-2.txt`, ...: the first not used by a tab.
+    fn unique_file_name(&self) -> String {
+        let taken = |n: &str| self.tabs.iter().any(|t| t.name == n);
+        (1..).map(|k| format!("untitled-{k}.txt")).find(|n| !taken(n)).unwrap()
+    }
+
     fn alloc_item_id(&mut self) -> ItemId {
         let id = self.tabs.iter().map(|t| t.id).max().unwrap_or(0) + 1;
         id.max(self.next_item_id)
@@ -259,7 +265,11 @@ impl App {
     pub fn add_tab(&mut self, kind: NewKind, group: Option<NodePath>) -> ItemId {
         let id = self.alloc_item_id();
         self.next_item_id = id + 1;
-        let name = self.unique_name(kind.base_name());
+        let name = match kind {
+            // A text file is named like one: its extension picks the syntax colours.
+            NewKind::Text => self.unique_file_name(),
+            _ => self.unique_name(kind.base_name()),
+        };
         let content = match kind {
             NewKind::Diagram => Content::Diagram(Some(TabState::new(Diagram::default(), false))),
             NewKind::Text => Content::Text { text: String::new(), saved: String::new() },
@@ -376,8 +386,12 @@ impl App {
     /// The kept text selection, when the focused tab is the editor of that file.
     pub fn focused_file_selection(&mut self) -> Option<crate::code::CodeSelection> {
         let i = self.focused_item().and_then(|id| self.index_of(id))?;
-        let Content::FileText { diagram, node } = self.tabs[i].content else { return None };
-        self.code_selection.clone().filter(|s| s.diagram == diagram && s.node == node)
+        let (item, node) = match self.tabs[i].content {
+            Content::FileText { diagram, node } => (diagram, Some(node)),
+            Content::Text { .. } => (self.tabs[i].id, None),
+            _ => return None,
+        };
+        self.code_selection.clone().filter(|s| s.item == item && s.node == node)
     }
 
     /// Whether the focused tab is a diagram (or no tab has focus yet).
@@ -531,7 +545,7 @@ impl App {
                 .show_add_buttons(true)
                 // No collapse triangle in front of each tab group.
                 .show_leaf_collapse_buttons(false)
-                // The + button opens `add_popup` (Diagram, Text note, Image) rather than calling `on_add`.
+                // The + button opens `add_popup` (Diagram, Text file, Image) rather than calling `on_add`.
                 .show_add_popup(true)
                 .show_leaf_close_all_buttons(false)
                 .show_inside(ui, &mut viewer);
@@ -700,24 +714,36 @@ impl App {
         ui.separator();
         let format = crate::model::text_format(&n.text);
         if let Some((a, b)) = crate::code::code_editor(ui, ("file", id), &mut n.content, format) {
-            let sel = crate::code::selection_of(&n.content, a, b, &n.text, diagram, node);
-            if self.code_selection.as_ref() != Some(&sel) {
-                self.code_selection = Some(sel);
-                // The status bar was drawn before this tab; show the change at once.
-                ui.ctx().request_repaint();
-            }
+            let sel = crate::code::selection_of(&n.content, a, b, &n.text, diagram, Some(node));
+            self.keep_selection(sel, ui);
+        }
+    }
+
+    /// Remembers the selection made in a text editor (see `code_selection`).
+    fn keep_selection(&mut self, sel: crate::code::CodeSelection, ui: &Ui) {
+        if self.code_selection.as_ref() != Some(&sel) {
+            self.code_selection = Some(sel);
+            // The status bar was drawn before this tab; show the change at once.
+            ui.ctx().request_repaint();
         }
     }
 
     fn show_text(&mut self, i: usize, ui: &mut Ui) {
         let id = self.tabs[i].id;
+        // A text file of the project: the same editor as a file object's, named by its tab.
+        let name = self.tabs[i].name.clone();
+        let format = crate::model::text_format(&name);
         let Content::Text { text, .. } = &mut self.tabs[i].content else { return };
-        egui::ScrollArea::vertical().id_salt(("text", id)).show(ui, |ui| {
-            ui.add_sized(
-                ui.available_size(),
-                egui::TextEdit::multiline(text).hint_text("Notes, requirements, anything...").desired_width(f32::INFINITY),
-            );
+        ui.horizontal(|ui| {
+            ui.strong(&name);
+            ui.weak(format.to_uppercase());
+            ui.weak("\u{2014} saved in the project");
         });
+        ui.separator();
+        if let Some((a, b)) = crate::code::code_editor(ui, ("text", id), text, format) {
+            let sel = crate::code::selection_of(text, a, b, &name, id, None);
+            self.keep_selection(sel, ui);
+        }
     }
 
     fn show_image(&mut self, i: usize, ui: &mut Ui) {
@@ -818,9 +844,12 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn add_popup(&mut self, ui: &mut Ui, path: NodePath) {
-        ui.set_min_width(140.0);
-        for (label, kind) in [("Diagram", NewKind::Diagram), ("Text note", NewKind::Text), ("Image", NewKind::Image)] {
-            if ui.button(label).clicked() {
+        // As narrow as the palette, in the palette's colours.
+        ui.set_width(150.0);
+        ui.painter().rect_filled(ui.max_rect().expand(6.0), 0.0, ui.ctx().global_style().visuals.panel_fill);
+        ui.spacing_mut().item_spacing.y = 2.0;
+        for (label, kind) in [("Diagram", NewKind::Diagram), ("Text file", NewKind::Text), ("Image", NewKind::Image)] {
+            if crate::app::rect_button(ui, label, false).clicked() {
                 self.pending.push(Pending::Add(kind, Some(path)));
             }
         }

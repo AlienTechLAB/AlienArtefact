@@ -15,6 +15,33 @@ use crate::render::{paint_edge, paint_shape, Deco};
 
 const MAX_UNDO: usize = 200;
 
+/// A plain rectangular button as wide as the space it is in, with its label on the left
+/// (palette categories, the + menu of the tabs). `chosen` shows it selected.
+pub fn rect_button(ui: &mut Ui, label: &str, chosen: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+    // The app's own colours, not those of the menu or popup it may be in, so it looks the same
+    // everywhere.
+    let style = ui.ctx().global_style();
+    let visuals = &style.visuals;
+    let fill = if chosen {
+        visuals.selection.bg_fill
+    } else if resp.hovered() {
+        visuals.widgets.hovered.weak_bg_fill
+    } else {
+        visuals.widgets.inactive.weak_bg_fill
+    };
+    let text = if chosen { visuals.selection.stroke.color } else { visuals.text_color() };
+    ui.painter().rect_filled(rect, 0.0, fill);
+    ui.painter().text(
+        Pos2::new(rect.left() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::TextStyle::Button.resolve(ui.style()),
+        text,
+    );
+    resp
+}
+
 /// egui's dark theme recoloured to match the neon canvas: navy panels, blue widgets, cyan
 /// selection.
 fn neon_visuals(v: &mut egui::Visuals) {
@@ -236,7 +263,7 @@ impl eframe::App for App {
             egui::Panel::left("palette").resizable(true).default_size(130.0).show(ui, |ui| self.palette(ui, view));
         }
         // The format panel is there only while something is selected: it edits the selection. It
-        // is hidden while a tab that is not a diagram (a file's editor, a note, an image) has focus.
+        // is hidden while a tab that is not a diagram (a file's editor, an image) has focus.
         let has_selection = self
             .selection
             .iter()
@@ -681,7 +708,7 @@ impl App {
                 if ui.add(egui::Button::new("New diagram").shortcut_text("Ctrl+T")).clicked() {
                     self.new_tab();
                 }
-                if ui.button("New text note").clicked() {
+                if ui.button("New text file").clicked() {
                     self.add_tab(NewKind::Text, None);
                 }
                 if ui.button("New image").clicked() {
@@ -899,26 +926,7 @@ impl App {
         // The category tabs: plain rectangles, the full width of the panel.
         ui.spacing_mut().item_spacing.y = 2.0;
         for v in PaletteView::ALL {
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
-            let chosen = v == view;
-            let visuals = ui.visuals();
-            let fill = if chosen {
-                visuals.selection.bg_fill
-            } else if resp.hovered() {
-                visuals.widgets.hovered.weak_bg_fill
-            } else {
-                visuals.widgets.inactive.weak_bg_fill
-            };
-            let text = if chosen { visuals.selection.stroke.color } else { visuals.text_color() };
-            ui.painter().rect_filled(rect, 0.0, fill);
-            ui.painter().text(
-                Pos2::new(rect.left() + 10.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                v.title(),
-                egui::TextStyle::Button.resolve(ui.style()),
-                text,
-            );
-            if resp.clicked() {
+            if rect_button(ui, v.title(), v == view).clicked() {
                 self.palette_view = Some(v);
             }
         }
