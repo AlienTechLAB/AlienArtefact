@@ -609,6 +609,7 @@ class Settings {};                         // loaded from settings.toml (Related
 
 **Checked** says how the reference editor (Alien Artefact) checks each rule:
 - **drawing:** the editor refuses the drawing action and explains why.
+- **editing:** the editor does not let the value be left that way (an emptied name is put back).
 - **validate:** the **Validate** command reports it (and `alien_artefact --validate <file>` from the command line).
 - **–:** cannot be decided from the diagram; it applies to generated code.
 
@@ -617,7 +618,7 @@ Unchecked rules are still part of the language, and a diagram that breaks one is
 | Rule | Summary | Checked |
 |---|---|---|
 | D1 | Only language elements carry meaning; other shapes and untyped lines are invalid | validate |
-| O1 | Object has a non-empty name | validate |
+| O1 | Object has a non-empty name | editing, validate |
 | O2 | Object names unique within their package | validate |
 | O3 | Class/trait/enum name is a valid identifier | validate |
 | O4 | Body holds members | – |
@@ -636,7 +637,7 @@ Unchecked rules are still part of the language, and a diagram that breaks one is
 | E1 | Enum has at least one variant | validate |
 | E2 | Variant names unique | validate |
 | E3 | Enums have no fields and no inheritance | drawing, validate |
-| F1 | File/directory has a name, path or pattern | validate |
+| F1 | File/directory has a name, path or pattern | editing, validate |
 | F2 | File/directory names unique | validate |
 | F3 | Files have no members | drawing |
 | F4 | No pointers to or from files and directories | drawing, validate |

@@ -94,6 +94,8 @@ pub struct App {
     pub palette_view: Option<PaletteView>,
     /// The category to show again when the panel is reopened with Ctrl+B.
     pub last_palette_view: PaletteView,
+    /// An object's name as it was when its name field got the focus (restored if left empty).
+    pub name_before_edit: String,
     /// Dark theme (the default); switchable in the toolbar and the View menu.
     pub dark: bool,
     /// The theme last applied to egui, so it is only changed when `dark` changes.
@@ -141,6 +143,7 @@ impl Default for App {
             pointer_const: false,
             palette_view: Some(PaletteView::Objects),
             last_palette_view: PaletteView::Objects,
+            name_before_edit: String::new(),
             dark: true,
             applied_dark: None,
         }
@@ -1027,12 +1030,9 @@ impl App {
         if single_collection {
             section(ui, "Collection", "fmt.object", |ui| {
                 egui::Grid::new("collection_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    // Chosen when the collection is created; it cannot be changed.
                     ui.label("Kind");
-                    egui::ComboBox::from_id_salt("collection_kind").selected_text(n.kind.name()).show_ui(ui, |ui| {
-                        for k in ShapeKind::COLLECTIONS {
-                            ui.selectable_value(&mut n.kind, k, k.name());
-                        }
-                    });
+                    ui.label(n.kind.name());
                     ui.end_row();
                     if n.kind == ShapeKind::Dictionary {
                         ui.label("Key");
@@ -1072,7 +1072,14 @@ impl App {
                         ShapeKind::Directory => "e.g. data/<Table>/",
                         _ => "",
                     };
-                    ui.add(egui::TextEdit::singleline(&mut n.text).hint_text(hint).desired_width(f32::INFINITY));
+                    let r = ui.add(egui::TextEdit::singleline(&mut n.text).hint_text(hint).desired_width(f32::INFINITY));
+                    // A name may be emptied while typing, but not left empty.
+                    if r.gained_focus() {
+                        self.name_before_edit = n.text.clone();
+                    }
+                    if r.lost_focus() {
+                        crate::model::keep_name(&mut n.text, &self.name_before_edit, n.kind);
+                    }
                     ui.end_row();
                     if n.kind.is_object() {
                         ui.label("Type params").on_hover_text("Generic parameters with bounds, e.g. R: Row");
@@ -1189,7 +1196,9 @@ impl App {
                 || n.task != before.task
                 || n.generated != before.generated
                 || n.flags != before.flags;
+            // Files keep their page shape: a long name wraps inside instead of widening them.
             if n.kind.is_named()
+                && !n.kind.is_storage()
                 && (n.members != before.members
                     || n.text != before.text
                     || n.font_size != before.font_size

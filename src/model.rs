@@ -124,7 +124,7 @@ pub fn collection_offset(w: f32, h: f32) -> f32 {
 
 /// Size of a file shape's folded corner for a shape of size `w` x `h`.
 pub fn file_fold(w: f32, h: f32) -> f32 {
-    (w.min(h) * 0.22).min(w * 0.5)
+    (w.min(h) * 0.24).min(w * 0.5)
 }
 
 /// Height of an object's header compartment (stereotype + name), for a given font size
@@ -169,6 +169,22 @@ impl ShapeKind {
     pub fn is_named(self) -> bool {
         self.is_object()
             || matches!(self, ShapeKind::File | ShapeKind::Directory | ShapeKind::External | ShapeKind::Package)
+    }
+
+    /// The name a new object of this kind gets (for a collection: its element type).
+    pub fn default_name(self) -> &'static str {
+        match self {
+            ShapeKind::Text => "Text",
+            ShapeKind::Class => "ClassName",
+            ShapeKind::Trait => "TraitName",
+            ShapeKind::File => "file.txt",
+            ShapeKind::Enum => "EnumName",
+            ShapeKind::External => "crate::Type",
+            ShapeKind::Package => "package",
+            ShapeKind::Directory => "data/",
+            k if k.is_collection() => "T",
+            _ => "",
+        }
     }
 
     /// Files and directories: things outside the program's memory.
@@ -231,7 +247,8 @@ impl ShapeKind {
             ShapeKind::Cylinder => vec2(60.0, 80.0),
             ShapeKind::Text => vec2(80.0, 30.0),
             ShapeKind::Class | ShapeKind::Trait => vec2(160.0, 100.0),
-            ShapeKind::File => vec2(140.0, 70.0),
+            // A page: taller than wide.
+            ShapeKind::File => vec2(80.0, 100.0),
             ShapeKind::Enum => vec2(160.0, 100.0),
             ShapeKind::External => vec2(170.0, 64.0),
             ShapeKind::Package => vec2(420.0, 300.0),
@@ -470,18 +487,7 @@ impl Node {
             kind,
             pos: [min.x, min.y],
             size: [size.x, size.y],
-            text: match kind {
-                ShapeKind::Text => "Text".into(),
-                ShapeKind::Class => "ClassName".into(),
-                ShapeKind::Trait => "TraitName".into(),
-                ShapeKind::File => "file.txt".into(),
-                ShapeKind::Enum => "EnumName".into(),
-                ShapeKind::External => "crate::Type".into(),
-                ShapeKind::Package => "package".into(),
-                ShapeKind::Directory => "data/".into(),
-                k if k.is_collection() => "T".into(),
-                _ => String::new(),
-            },
+            text: kind.default_name().into(),
             fill: match kind {
                 ShapeKind::Text => NONE,
                 ShapeKind::Package => [246, 247, 250, 255],
@@ -2389,5 +2395,34 @@ mod rename_tests {
         assert_eq!(project.items[0].name, "Old");
         let clip: Clip = serde_json::from_str(r#"{"architect_ai_clip":1,"nodes":[],"edges":[]}"#).unwrap();
         assert_eq!(clip.alien_artefact_clip, 1);
+    }
+}
+
+
+/// Rule O1/F1 while editing: an object's name may be emptied while it is being typed, but not left
+/// empty. Puts back `original` (the name before editing), or the kind's default name.
+pub fn keep_name(name: &mut String, original: &str, kind: ShapeKind) {
+    if name.trim().is_empty() {
+        *name = if original.trim().is_empty() { kind.default_name().to_owned() } else { original.to_owned() };
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn names_cannot_be_left_empty() {
+        let mut name = "   ".to_owned();
+        keep_name(&mut name, "Renderer", ShapeKind::Trait);
+        assert_eq!(name, "Renderer", "the name before editing comes back");
+
+        let mut name = String::new();
+        keep_name(&mut name, "", ShapeKind::Enum);
+        assert_eq!(name, "EnumName", "or the kind's default");
+
+        let mut name = "Other".to_owned();
+        keep_name(&mut name, "Renderer", ShapeKind::Class);
+        assert_eq!(name, "Other", "a real name is kept");
     }
 }

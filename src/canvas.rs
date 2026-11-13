@@ -425,6 +425,7 @@ impl App {
         self.select_only(id);
         self.editing = Some(id);
         self.edit_focus = true;
+        self.name_before_edit = self.diagram.node(id).map(|n| n.text.clone()).unwrap_or_default();
     }
 
     pub fn add_node_at(&mut self, kind: ShapeKind, world_center: Pos2) -> Id {
@@ -603,6 +604,10 @@ impl App {
         } else if r.lost_focus() || ui.input(|i| i.key_pressed(Key::Escape)) {
             r.surrender_focus();
             self.editing = None;
+            // Objects keep a name (collections hold an element type here, checked by Validate).
+            if let Some(n) = self.diagram.node_mut(id).filter(|n| n.kind.is_named()) {
+                crate::model::keep_name(&mut n.text, &self.name_before_edit, n.kind);
+            }
         }
     }
 
