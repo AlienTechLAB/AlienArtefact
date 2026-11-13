@@ -201,12 +201,16 @@ impl App {
     /// and stays active if the user pressed a mouse button on it.
     fn show_diagram(&mut self, i: usize, ui: &mut Ui) {
         let id = self.tabs[i].id;
+        let name = self.tabs[i].name.clone();
         if self.active == Some(i) {
+            self.diagram_strip(ui, &name);
             self.canvas(ui);
         } else {
             let previous = self.active;
             self.swap_active(i);
-            let pressed = self.canvas(ui);
+            // Using the strip's controls also makes the diagram the active one.
+            let used = self.diagram_strip(ui, &name);
+            let pressed = self.canvas(ui) || used;
             if pressed {
                 // The previous diagram's last edits become its own undo step.
                 if let Some(Content::Diagram(Some(prev))) = previous.map(|p| &mut self.tabs[p].content) {

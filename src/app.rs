@@ -733,24 +733,39 @@ impl App {
                 self.diagram.reorder(&self.selection, false);
             }
             ui.separator();
-            if ui.button(" - ").clicked() {
+            ui.checkbox(&mut self.dark, "Dark").on_hover_text("Dark theme (also in View)");
+        });
+    }
+
+    /// The strip at the top of a diagram tab (like a file's): its name, zoom and grid controls.
+    /// Returns true when one of them was used.
+    pub fn diagram_strip(&mut self, ui: &mut Ui, name: &str) -> bool {
+        let mut used = false;
+        ui.horizontal(|ui| {
+            ui.strong(name);
+            ui.separator();
+            if ui.button(" - ").on_hover_text("Zoom out").clicked() {
                 self.zoom_by(0.8);
+                used = true;
             }
             if ui.button(format!("{:.0}%", self.zoom * 100.0)).on_hover_text("Reset zoom").clicked() {
                 self.zoom_by(1.0 / self.zoom);
+                used = true;
             }
-            if ui.button(" + ").clicked() {
+            if ui.button(" + ").on_hover_text("Zoom in").clicked() {
                 self.zoom_by(1.25);
+                used = true;
             }
-            if ui.button("Fit").clicked() {
+            if ui.button("Fit").on_hover_text("Fit the diagram in view").clicked() {
                 self.fit_view();
+                used = true;
             }
             ui.separator();
-            ui.checkbox(&mut self.show_grid, "Grid");
-            ui.checkbox(&mut self.snap, "Snap");
-            ui.separator();
-            ui.checkbox(&mut self.dark, "Dark").on_hover_text("Dark theme (also in View)");
+            used |= ui.checkbox(&mut self.show_grid, "Grid").changed();
+            used |= ui.checkbox(&mut self.snap, "Snap").changed();
         });
+        ui.separator();
+        used
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
@@ -837,15 +852,32 @@ impl App {
             });
         });
         ui.add_space(2.0);
-        // The category tabs.
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            for v in PaletteView::ALL {
-                if ui.selectable_label(v == view, v.title()).clicked() {
-                    self.palette_view = Some(v);
-                }
+        // The category tabs: plain rectangles, the full width of the panel.
+        ui.spacing_mut().item_spacing.y = 2.0;
+        for v in PaletteView::ALL {
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+            let chosen = v == view;
+            let visuals = ui.visuals();
+            let fill = if chosen {
+                visuals.selection.bg_fill
+            } else if resp.hovered() {
+                visuals.widgets.hovered.weak_bg_fill
+            } else {
+                visuals.widgets.inactive.weak_bg_fill
+            };
+            let text = if chosen { visuals.selection.stroke.color } else { visuals.text_color() };
+            ui.painter().rect_filled(rect, 0.0, fill);
+            ui.painter().text(
+                Pos2::new(rect.left() + 10.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                v.title(),
+                egui::TextStyle::Button.resolve(ui.style()),
+                text,
+            );
+            if resp.clicked() {
+                self.palette_view = Some(v);
             }
-        });
+        }
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
             match view {
