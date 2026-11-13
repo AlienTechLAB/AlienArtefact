@@ -176,7 +176,7 @@ pub fn paint_shape(
             painter.rect(front, 2.0, fill, stroke, StrokeKind::Middle);
             paint_stereotype(front);
         }
-        ShapeKind::File => {
+        ShapeKind::File | ShapeKind::BinaryFile => {
             if let Some(pts) = outline(kind, r) {
                 painter.add(Shape::convex_polygon(pts, fill, stroke));
             }

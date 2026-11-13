@@ -416,8 +416,14 @@ impl App {
     fn on_double_click(&mut self, p: Pos2) {
         let w = self.to_world(p);
         let hit = self.diagram.hit(w, EDGE_HIT / self.zoom);
+        // A text file opens its contents in a tab; anything else is renamed in place.
         if let Some(id) = hit {
-            self.start_editing(id);
+            if self.diagram.node(id).is_some_and(|n| n.kind == ShapeKind::File) {
+                self.select_only(id);
+                self.open_file_request = Some(id);
+            } else {
+                self.start_editing(id);
+            }
         }
     }
 
@@ -478,6 +484,12 @@ impl App {
             if self.editing != Some(n.id) {
                 let tr = self.rect_to_screen(n.text_rect());
                 paint_text(painter, tr, &self.diagram.display_text(n), n.font_size * z, tone_ink(color(n.text_color)));
+            }
+            if let Some(tag) = n.file_tag().filter(|_| n.font_size * z >= 5.0) {
+                let at = pos2(sr.center().x, sr.bottom() - n.font_size * z * 0.9);
+                let font = FontId::monospace(n.font_size * z * 0.72);
+                let ink = tone_ink(color(n.text_color)).gamma_multiply(0.65);
+                painter.text(at, egui::Align2::CENTER_CENTER, tag, font, ink);
             }
             if n.kind.is_object() {
                 paint_members(painter, n, sr, z, stroke);

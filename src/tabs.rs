@@ -17,7 +17,7 @@ use egui_stack::{DockArea, NodePath, Style, TabPath, TabViewer};
 
 use crate::app::App;
 use crate::canvas::{Drag, LinkError};
-use crate::model::{Diagram, Id, ItemContent, Layout, Project, ProjectItem};
+use crate::model::{Diagram, Id, ItemContent, Layout, Node, Project, ProjectItem, ShapeKind};
 
 pub type ItemId = u64;
 
@@ -67,6 +67,9 @@ pub enum Content {
     Diagram(Option<TabState>),
     Text { text: String, saved: String },
     Image { path: String, saved: String },
+    /// The contents of a text file object (`node`) of diagram tab `diagram`. The text lives in the
+    /// diagram, so its changes are the diagram's (undo, unsaved marker).
+    FileText { diagram: ItemId, node: Id },
 }
 
 /// The kinds of tab that can be created.
@@ -261,6 +264,8 @@ impl App {
             Content::Diagram(None) => !self.diagram.nodes.is_empty() || !self.diagram.edges.is_empty(),
             Content::Text { text, .. } => !text.trim().is_empty(),
             Content::Image { path, .. } => !path.trim().is_empty(),
+            // Its text belongs to the diagram; closing the tab loses nothing.
+            Content::FileText { .. } => false,
         }
     }
 
@@ -321,6 +326,14 @@ impl App {
         self.dock.find_active_focused().map(|(_, id)| *id)
     }
 
+    /// Whether the focused tab is a diagram (or no tab has focus yet).
+    pub fn diagram_focused(&mut self) -> bool {
+        match self.focused_item().and_then(|id| self.index_of(id)) {
+            Some(i) => matches!(self.tabs[i].content, Content::Diagram(_)),
+            None => true,
+        }
+    }
+
     fn duplicate_tab(&mut self, id: ItemId) {
         let Some(i) = self.index_of(id) else { return };
         let content = match &self.tabs[i].content {
@@ -328,6 +341,8 @@ impl App {
             Content::Diagram(None) => ItemContent::Diagram(self.diagram.clone()),
             Content::Text { text, .. } => ItemContent::Text(text.clone()),
             Content::Image { path, .. } => ItemContent::Image(path.clone()),
+            // A second view of the same file adds nothing.
+            Content::FileText { .. } => return,
         };
         let new_id = self.alloc_item_id();
         self.next_item_id = new_id + 1;
@@ -341,6 +356,7 @@ impl App {
             }
             ItemContent::Text(t) => Content::Text { text: t, saved: String::new() },
             ItemContent::Image(p) => Content::Image { path: p, saved: String::new() },
+            ItemContent::FileText { .. } => return,
         };
         self.tabs.push(Tab { id: new_id, name, content });
         if let Some(path) = self.dock.find_tab(&id) {
@@ -371,6 +387,7 @@ impl App {
                     ItemContent::Diagram(d) => Content::Diagram(Some(TabState::new(d, true))),
                     ItemContent::Text(t) => Content::Text { saved: t.clone(), text: t },
                     ItemContent::Image(p) => Content::Image { saved: p.clone(), path: p },
+                    ItemContent::FileText { diagram, node } => Content::FileText { diagram, node },
                 },
             })
             .collect();
@@ -385,7 +402,7 @@ impl App {
         self.restore(state);
         self.active = active;
         self.next_item_id = self.tabs.iter().map(|t| t.id).max().unwrap_or(0) + 1;
-        self.saved_names = self.tabs.iter().map(|t| t.name.clone()).collect();
+        self.saved_names = self.content_tab_names();
         self.renaming = None;
         self.path = path;
     }
@@ -402,6 +419,7 @@ impl App {
                     Content::Diagram(None) => ItemContent::Diagram(self.diagram.clone()),
                     Content::Text { text, .. } => ItemContent::Text(text.clone()),
                     Content::Image { path, .. } => ItemContent::Image(path.clone()),
+                    Content::FileText { diagram, node } => ItemContent::FileText { diagram: *diagram, node: *node },
                 },
             })
             .collect()
@@ -413,12 +431,23 @@ impl App {
             Content::Diagram(None) => self.diagram != self.saved,
             Content::Text { text, saved } => text != saved,
             Content::Image { path, saved } => path != saved,
+            Content::FileText { .. } => false,
         }
+    }
+
+    /// Names of the tabs that are project content (file editor tabs are only views of a diagram's
+    /// file, so opening or closing one is not a change).
+    fn content_tab_names(&self) -> Vec<String> {
+        self.tabs
+            .iter()
+            .filter(|t| !matches!(t.content, Content::FileText { .. }))
+            .map(|t| t.name.clone())
+            .collect()
     }
 
     /// Unsaved changes in any tab, or tabs added, removed or renamed.
     pub fn project_dirty(&self) -> bool {
-        self.tabs.iter().any(|t| self.tab_dirty(t)) || self.tabs.iter().map(|t| &t.name).ne(self.saved_names.iter())
+        self.tabs.iter().any(|t| self.tab_dirty(t)) || self.content_tab_names() != self.saved_names
     }
 
     /// After saving: every tab's current contents count as saved.
@@ -430,9 +459,10 @@ impl App {
                 Content::Diagram(None) => {}
                 Content::Text { text, saved } => *saved = text.clone(),
                 Content::Image { path, saved } => *saved = path.clone(),
+                Content::FileText { .. } => {}
             }
         }
-        self.saved_names = self.tabs.iter().map(|t| t.name.clone()).collect();
+        self.saved_names = self.content_tab_names();
     }
 
     // ---------------------------------------------------------------- the dock
@@ -454,6 +484,10 @@ impl App {
                 .show_inside(ui, &mut viewer);
         }
         self.dock = dock;
+
+        if let Some(node) = self.open_file_request.take() {
+            self.open_file_tab(node);
+        }
 
         // The active diagram should be one that can be seen: when it is hidden behind another tab,
         // the first visible diagram takes over.
@@ -526,6 +560,74 @@ impl App {
         }
     }
 
+    /// Text file object `node` of diagram tab `diagram`, wherever that diagram's state is.
+    fn file_node(&self, diagram: ItemId, node: Id) -> Option<&Node> {
+        let i = self.index_of(diagram)?;
+        match &self.tabs[i].content {
+            Content::Diagram(None) => self.diagram.node(node),
+            Content::Diagram(Some(s)) => s.diagram.node(node),
+            _ => None,
+        }
+    }
+
+    fn file_node_mut(&mut self, diagram: ItemId, node: Id) -> Option<&mut Node> {
+        let i = self.index_of(diagram)?;
+        match &mut self.tabs[i].content {
+            Content::Diagram(None) => self.diagram.node_mut(node),
+            Content::Diagram(Some(s)) => s.diagram.node_mut(node),
+            _ => None,
+        }
+    }
+
+    /// Opens (or brings forward) the tab editing the contents of text file `node` of the active
+    /// diagram.
+    pub fn open_file_tab(&mut self, node: Id) {
+        let diagram = self.tabs[self.active].id;
+        if self.diagram.node(node).is_none_or(|n| n.kind != ShapeKind::File) {
+            return;
+        }
+        let existing = self.tabs.iter().find(|t| {
+            matches!(t.content, Content::FileText { diagram: d, node: n } if d == diagram && n == node)
+        });
+        if let Some(t) = existing {
+            if let Some(path) = self.dock.find_tab(&t.id) {
+                let _ = self.dock.set_active_tab(path);
+                self.dock.set_focused_node_and_surface(path.node_path());
+            }
+            return;
+        }
+        let id = self.alloc_item_id();
+        self.next_item_id = id + 1;
+        let name = self.diagram.node(node).map_or_else(String::new, |n| n.text.clone());
+        self.tabs.push(Tab { id, name, content: Content::FileText { diagram, node } });
+        // Next to the diagram the file belongs to.
+        if let Some(path) = self.dock.find_tab(&diagram) {
+            self.dock.set_focused_node_and_surface(path.node_path());
+        }
+        self.dock.push_to_focused_leaf(id);
+    }
+
+    fn show_file_text(&mut self, i: usize, ui: &mut Ui) {
+        let id = self.tabs[i].id;
+        let Content::FileText { diagram, node } = self.tabs[i].content else { return };
+        let Some(n) = self.file_node_mut(diagram, node) else {
+            ui.weak("This file is no longer in its diagram. You can close this tab.");
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.strong(&n.text);
+            ui.weak(n.file_tag().unwrap_or_default());
+            ui.weak("\u{2014} saved with the diagram");
+        });
+        ui.separator();
+        egui::ScrollArea::both().id_salt(("file", id)).show(ui, |ui| {
+            ui.add_sized(
+                ui.available_size(),
+                egui::TextEdit::multiline(&mut n.content).code_editor().desired_width(f32::INFINITY),
+            );
+        });
+    }
+
     fn show_text(&mut self, i: usize, ui: &mut Ui) {
         let id = self.tabs[i].id;
         let Content::Text { text, .. } = &mut self.tabs[i].content else { return };
@@ -583,6 +685,13 @@ impl TabViewer for Viewer<'_> {
 
     fn title(&mut self, tab: &mut ItemId) -> WidgetText {
         let Some(i) = self.app.index_of(*tab) else { return "?".into() };
+        if let Content::FileText { diagram, node } = self.app.tabs[i].content {
+            // The file's current name (it may have been renamed in the diagram).
+            return match self.app.file_node(diagram, node) {
+                Some(n) => n.text.clone().into(),
+                None => "(missing file)".into(),
+            };
+        }
         let t = &self.app.tabs[i];
         let dirty = if self.app.tab_dirty(t) { " *" } else { "" };
         let active = if i == self.app.active { "\u{25cf} " } else { "" };
@@ -595,6 +704,7 @@ impl TabViewer for Viewer<'_> {
             Content::Diagram(_) => self.app.show_diagram(i, ui),
             Content::Text { .. } => self.app.show_text(i, ui),
             Content::Image { .. } => self.app.show_image(i, ui),
+            Content::FileText { .. } => self.app.show_file_text(i, ui),
         }
     }
 
@@ -733,6 +843,39 @@ mod tests {
         assert_eq!(app.tabs.len(), 1);
         assert_eq!(app.active, 0);
         assert_eq!(app.diagram.nodes.len(), 2, "now showing the remaining diagram");
+    }
+
+    #[test]
+    fn double_clicked_text_files_open_once_and_edit_the_diagram() {
+        let mut app = App::default();
+        let f = app.diagram.add_node(ShapeKind::File, pos2(0.0, 0.0));
+        let b = app.diagram.add_node(ShapeKind::BinaryFile, pos2(200.0, 0.0));
+        app.open_file_tab(b);
+        assert_eq!(app.tabs.len(), 1, "binary files have no text to edit");
+
+        app.open_file_tab(f);
+        app.open_file_tab(f);
+        assert_eq!(app.tabs.len(), 2, "opening again brings the same tab forward");
+        let tab = app.tabs[1].id;
+        let Content::FileText { diagram, node } = app.tabs[1].content else { panic!() };
+        assert_eq!((diagram, node), (app.tabs[0].id, f));
+        assert_eq!(app.dock.iter_all_tabs().count(), 2);
+
+        // Its text is the file object's contents.
+        app.file_node_mut(diagram, node).unwrap().content = "{ }".into();
+        assert_eq!(app.diagram.node(f).unwrap().content, "{ }");
+
+        // It is saved as part of the project and reopens.
+        let items = app.project_items();
+        assert!(items.iter().any(|i| i.id == tab && i.content == ItemContent::FileText { diagram, node }));
+        let layout = app.dock.clone();
+        app.reset_project(Project { items, active: Some(diagram), layout: Some(layout) }, None);
+        assert_eq!(app.file_node(diagram, node).unwrap().content, "{ }");
+
+        // Opening a file's tab is not a change to the project.
+        app.mark_project_saved();
+        app.open_file_tab(app.diagram.nodes.iter().find(|n| n.kind == ShapeKind::File).unwrap().id);
+        assert!(!app.project_dirty());
     }
 
     #[test]

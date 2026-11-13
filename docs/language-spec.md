@@ -170,6 +170,8 @@ A **file** is something the program reads or writes outside its memory: a config
 - **Name:** the file's name or path, e.g. `settings.toml`, `assets/shaders/basic.wgsl`, `logs/app.log`.
 - **Connections:** a file is connected to types only by **Related**. The label says what the type does with the file: "reads", "writes", "loaded into", "saved from".
 
+**Text or binary.** A file is either a **text file** or a **binary file**. This is chosen when the file is created and cannot be changed. A text file has a **format** (`txt`, `json`, `toml`, `yaml`, `xml`, `csv`, `md`, `ini`, …), which may be changed, shown as a small tag at the bottom of the page (`TOML`); a binary file shows `BIN`. A text file MAY carry its **contents** in the blueprint, for example a sample configuration; binary files carry none.
+
 A **directory** is a folder of files: a store directory, a web root, a backup folder. It follows the same rules as a file (F1–F6) and is drawn as a folder: a rectangle with a small tab on its top edge.
 
 **Name patterns.** A file or directory name MAY contain placeholders in angle brackets for parts that vary at run time: `<store>/<Table>.tbl` is one file per table in the store directory, `<store>/<n>/<id>.dat` one file per blob. A pattern names a *family* of files.
@@ -184,6 +186,7 @@ A **directory** is a folder of files: a store directory, a web root, a backup fo
 | **F4** | A pointer MUST NOT start or end at a file or directory. A file is not a value in memory. A type that keeps a file open has a **field** holding the handle (e.g. `std::fstream`, `std::fs::File`, `FileStream`) and a Related line to the file. |
 | **F5** | A file MUST NOT take part in **Implements** or **Inheritance**. |
 | **F6** | A Related line to a file SHOULD have a label stating what the type does with it ("reads", "writes", "loaded into"). |
+| **F7** | A file is a text file or a binary file, fixed when it is created. Only a text file has a format and contents; the format SHOULD match the contents (valid JSON for `json`, ...). |
 
 ### 3.6 Collections
 
@@ -643,6 +646,7 @@ Unchecked rules are still part of the language, and a diagram that breaks one is
 | F4 | No pointers to or from files and directories | drawing, validate |
 | F5 | Files take no part in Implements or Inheritance | drawing, validate |
 | F6 | Related lines to files are labeled | no |
+| F7 | Text or binary fixed; only text files have a format and contents | drawing |
 | C1 | At most one element pointer per collection | drawing, validate |
 | C2 | A collection is not its own element | drawing, validate |
 | C3 | A collection has an element type | validate |

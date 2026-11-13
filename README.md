@@ -5,7 +5,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 ## Features
 
 - Objects: class/struct, and trait/interface (Rust trait, C# interface, C++ pure virtual class) shown with a `«trait»` stereotype above the name. Names are edited in the right panel or by double-clicking
-- File object: a document shape (folded corner) for config/data/asset/log files; connected to types with Related only (no pointers, no members)
+- Files: a text file or a binary file, chosen when created (page shape with a folded corner and a format tag). Text files have a format (txt, json, toml, rs, py, ...) and contents: double-click one to edit its contents in a tab. Connected to types with Related only (no pointers, no members)
 - Collections: set, vector, dictionary, tree, queue (stacked-cards shape with a «kind» stereotype). The element type comes from the collection's one outgoing pointer, or from text for outside types; dictionaries also have a key type
 - Enums (variants, flags), external types, packages (frames for crates/modules) and directories
 - Object properties: type parameters, scope (singleton / per request / per session), task (with period), generated; members can be async, repeated (×N), internal (~)

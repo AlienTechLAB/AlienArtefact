@@ -34,9 +34,11 @@ pub enum ShapeKind {
     /// Interface (Rust trait, C# interface, C++ pure virtual class): like a class,
     /// with a `«trait»` stereotype above the name.
     Trait,
-    /// A file outside the program's memory (config, data, asset, log): a document shape with
-    /// a folded corner. Not a type: no members, no pointers.
+    /// A text file outside the program's memory (config, data, log): a page with a folded corner.
+    /// Not a type: no members, no pointers. Has a format (json, toml, ...) and editable contents.
     File,
+    /// A binary file (asset, database, archive). Text or binary is fixed when the file is created.
+    BinaryFile,
     /// Collections: containers of elements of one type. The element type comes from the
     /// collection's one outgoing pointer, or from its `text` (a type outside the diagram).
     /// Unique elements, no order.
@@ -142,13 +144,14 @@ pub fn stereotype_height(font_size: f32, box_height: f32) -> f32 {
 impl ShapeKind {
     /// Shapes offered in the "Objects" palette section. The other kinds can no longer be
     /// created, but stay so diagrams that contain them still open and draw.
-    pub const OBJECTS: [ShapeKind; 7] = [
+    pub const OBJECTS: [ShapeKind; 8] = [
         ShapeKind::Class,
         ShapeKind::Trait,
         ShapeKind::Enum,
         ShapeKind::External,
         ShapeKind::Package,
         ShapeKind::File,
+        ShapeKind::BinaryFile,
         ShapeKind::Directory,
     ];
 
@@ -168,7 +171,10 @@ impl ShapeKind {
     /// Language elements with a one-line name edited in the right panel.
     pub fn is_named(self) -> bool {
         self.is_object()
-            || matches!(self, ShapeKind::File | ShapeKind::Directory | ShapeKind::External | ShapeKind::Package)
+            || matches!(
+                self,
+                ShapeKind::File | ShapeKind::BinaryFile | ShapeKind::Directory | ShapeKind::External | ShapeKind::Package
+            )
     }
 
     /// The name a new object of this kind gets (for a collection: its element type).
@@ -178,6 +184,7 @@ impl ShapeKind {
             ShapeKind::Class => "ClassName",
             ShapeKind::Trait => "TraitName",
             ShapeKind::File => "file.txt",
+            ShapeKind::BinaryFile => "data.bin",
             ShapeKind::Enum => "EnumName",
             ShapeKind::External => "crate::Type",
             ShapeKind::Package => "package",
@@ -189,7 +196,12 @@ impl ShapeKind {
 
     /// Files and directories: things outside the program's memory.
     pub fn is_storage(self) -> bool {
-        matches!(self, ShapeKind::File | ShapeKind::Directory)
+        matches!(self, ShapeKind::File | ShapeKind::BinaryFile | ShapeKind::Directory)
+    }
+
+    /// Text and binary files (not directories).
+    pub fn is_file(self) -> bool {
+        matches!(self, ShapeKind::File | ShapeKind::BinaryFile)
     }
 
     /// Kinds that belong to the language (the rest are legacy drawing shapes).
@@ -225,7 +237,8 @@ impl ShapeKind {
             ShapeKind::Text => "Text",
             ShapeKind::Class => "Class / struct",
             ShapeKind::Trait => "Trait / interface",
-            ShapeKind::File => "File",
+            ShapeKind::File => "Text file",
+            ShapeKind::BinaryFile => "Binary file",
             ShapeKind::Set => "Set",
             ShapeKind::Vector => "Vector",
             ShapeKind::Dictionary => "Dictionary",
@@ -248,7 +261,7 @@ impl ShapeKind {
             ShapeKind::Text => vec2(80.0, 30.0),
             ShapeKind::Class | ShapeKind::Trait => vec2(160.0, 100.0),
             // A page: taller than wide.
-            ShapeKind::File => vec2(80.0, 100.0),
+            ShapeKind::File | ShapeKind::BinaryFile => vec2(80.0, 100.0),
             ShapeKind::Enum => vec2(160.0, 100.0),
             ShapeKind::External => vec2(170.0, 64.0),
             ShapeKind::Package => vec2(420.0, 300.0),
@@ -295,7 +308,17 @@ pub struct Node {
     /// For an enum: the variants are bit flags that combine.
     #[serde(default)]
     pub flags: bool,
+    /// For a text file: its format (json, toml, txt, ...). Can be changed.
+    #[serde(default)]
+    pub format: String,
+    /// For a text file: its contents, edited in a tab.
+    #[serde(default)]
+    pub content: String,
 }
+
+/// Formats offered for text files (any other can be typed).
+pub const TEXT_FORMATS: [&str; 15] =
+    ["txt", "json", "toml", "yaml", "xml", "csv", "md", "ini", "html", "log", "h", "c", "cpp", "rs", "py"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemberKind {
@@ -504,6 +527,21 @@ impl Node {
             task: None,
             generated: false,
             flags: false,
+            format: if kind == ShapeKind::File { "txt".into() } else { String::new() },
+            content: String::new(),
+        }
+    }
+
+    /// The small tag at the bottom of a file's page: its format for a text file, `BIN` for a
+    /// binary one.
+    pub fn file_tag(&self) -> Option<String> {
+        match self.kind {
+            ShapeKind::File => {
+                let f = self.format.trim();
+                Some(if f.is_empty() { "TXT".to_owned() } else { f.to_uppercase() })
+            }
+            ShapeKind::BinaryFile => Some("BIN".to_owned()),
+            _ => None,
         }
     }
 
@@ -513,7 +551,7 @@ impl Node {
         let mut parts: Vec<String> = Vec::new();
         match self.kind {
             ShapeKind::Enum if self.flags => parts.push("flags".into()),
-            ShapeKind::Package | ShapeKind::Directory | ShapeKind::File => {}
+            ShapeKind::Package | ShapeKind::Directory | ShapeKind::File | ShapeKind::BinaryFile => {}
             k => {
                 if let Some(s) = k.stereotype() {
                     parts.push(s.trim_matches(['\u{ab}', '\u{bb}']).to_owned());
@@ -584,6 +622,12 @@ impl Node {
             // External: below its stereotype. Directory: below the folder tab.
             let top = if self.kind == ShapeKind::External { self.font_size * 1.3 } else { self.font_size * 0.6 };
             return Rect::from_min_max(pos2(r.left(), (r.top() + top).min(r.bottom())), r.max);
+        }
+        if self.kind.is_file() {
+            // The name sits between the folded corner and the format tag.
+            let f = file_fold(r.width(), r.height());
+            let bottom = (r.bottom() - self.font_size * 1.6).max(r.top() + f);
+            return Rect::from_min_max(pos2(r.left(), r.top() + f * 0.6), pos2(r.right(), bottom));
         }
         if self.kind.is_collection() {
             // Below the stereotype on the front card.
@@ -661,7 +705,7 @@ pub fn outline(kind: ShapeKind, r: Rect) -> Option<Vec<Pos2>> {
             p(0.0, 0.5),
         ],
         ShapeKind::Parallelogram => vec![p(0.2, 0.0), p(1.0, 0.0), p(0.8, 1.0), p(0.0, 1.0)],
-        ShapeKind::File => {
+        ShapeKind::File | ShapeKind::BinaryFile => {
             let f = file_fold(r.width(), r.height());
             vec![r.left_top(), pos2(r.right() - f, r.top()), pos2(r.right(), r.top() + f), r.right_bottom(), r.left_bottom()]
         }
@@ -1019,6 +1063,8 @@ pub enum ItemContent {
     Text(String),
     /// A picture, by file path.
     Image(String),
+    /// The contents of text file `node` in diagram item `diagram`, open for editing.
+    FileText { diagram: u64, node: u64 },
 }
 
 impl ItemContent {
@@ -1028,6 +1074,7 @@ impl ItemContent {
             ItemContent::Diagram(_) => "diagram",
             ItemContent::Text(_) => "text",
             ItemContent::Image(_) => "image",
+            ItemContent::FileText { .. } => "file",
         }
     }
 }
@@ -1207,7 +1254,8 @@ impl Diagram {
                 let kind = match n.kind {
                     ShapeKind::Class => "a class",
                     ShapeKind::Trait => "a trait",
-                    ShapeKind::File => "a file",
+                    ShapeKind::File => "a text file",
+                    ShapeKind::BinaryFile => "a binary file",
                     ShapeKind::Directory => "a directory",
                     ShapeKind::Enum => "an enum",
                     ShapeKind::External => "an external type",
@@ -2217,7 +2265,7 @@ mod file_tests {
             assert!(d.link_allowed(p, c, t));
         }
         let msg = d.link_error(LinkKind::Pointer(PointerKind::Unique), c, f).unwrap();
-        assert!(msg.contains("\"file.txt\" is a file") && msg.contains("Related"), "{msg}");
+        assert!(msg.contains("\"file.txt\" is a text file") && msg.contains("Related"), "{msg}");
 
         assert!(!d.link_allowed(LinkKind::Relation(RelationKind::Implements), f, t));
         assert!(!d.link_allowed(LinkKind::Relation(RelationKind::Inherits), f, f2));
@@ -2229,7 +2277,7 @@ mod file_tests {
         let n = Node::new(1, ShapeKind::File, pos2(0.0, 0.0));
         assert_eq!(n.text, "file.txt");
         assert!(n.kind.is_named() && !n.kind.is_object());
-        assert_eq!(n.text_rect(), n.rect(), "name is centered in the whole shape");
+        assert!(n.rect().contains_rect(n.text_rect()), "the name is inside the page (above the format tag)");
         let pts = outline(ShapeKind::File, n.rect()).unwrap();
         assert_eq!(pts.len(), 5, "rectangle with one corner cut off");
         // Lines attach to the cut corner, not the bounding box corner.
@@ -2424,5 +2472,29 @@ mod name_tests {
         let mut name = "Other".to_owned();
         keep_name(&mut name, "Renderer", ShapeKind::Class);
         assert_eq!(name, "Other", "a real name is kept");
+    }
+}
+
+
+#[cfg(test)]
+mod file_kind_tests {
+    use super::*;
+
+    #[test]
+    fn text_and_binary_files() {
+        let t = Node::new(1, ShapeKind::File, pos2(0.0, 0.0));
+        let b = Node::new(2, ShapeKind::BinaryFile, pos2(0.0, 0.0));
+        assert_eq!((t.text.as_str(), t.format.as_str()), ("file.txt", "txt"));
+        assert_eq!(t.file_tag().as_deref(), Some("TXT"));
+        assert_eq!(b.file_tag().as_deref(), Some("BIN"));
+        assert!(b.kind.is_storage() && b.kind.is_file() && b.kind.is_named());
+        // The name sits inside the page, above the tag.
+        assert!(t.rect().contains_rect(t.text_rect()) && t.text_rect().bottom() < t.rect().bottom());
+
+        // Files from before the text/binary split are text files with no contents.
+        let json = serde_json::to_string(&t).unwrap().replace(r#","format":"txt","content":"""#, "");
+        let old: Node = serde_json::from_str(&json).unwrap();
+        assert_eq!((old.kind, old.format.as_str(), old.content.as_str()), (ShapeKind::File, "", ""));
+        assert_eq!(old.file_tag().as_deref(), Some("TXT"));
     }
 }

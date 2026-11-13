@@ -94,6 +94,8 @@ pub struct App {
     pub palette_view: Option<PaletteView>,
     /// The category to show again when the panel is reopened with Ctrl+B.
     pub last_palette_view: PaletteView,
+    /// A text file (in the active diagram) whose contents should be opened in a tab.
+    pub open_file_request: Option<Id>,
     /// An object's name as it was when its name field got the focus (restored if left empty).
     pub name_before_edit: String,
     /// Dark theme (the default); switchable in the toolbar and the View menu.
@@ -143,6 +145,7 @@ impl Default for App {
             pointer_const: false,
             palette_view: Some(PaletteView::Objects),
             last_palette_view: PaletteView::Objects,
+            open_file_request: None,
             name_before_edit: String::new(),
             dark: true,
             applied_dark: None,
@@ -171,12 +174,13 @@ impl eframe::App for App {
         if let Some(view) = self.palette_view {
             egui::Panel::left("palette").resizable(true).default_size(130.0).show(ui, |ui| self.palette(ui, view));
         }
-        // The format panel is there only while something is selected: it edits the selection.
+        // The format panel is there only while something is selected: it edits the selection. It
+        // is hidden while a tab that is not a diagram (a file's editor, a note, an image) has focus.
         let has_selection = self
             .selection
             .iter()
             .any(|id| self.diagram.node(*id).is_some() || self.diagram.edge(*id).is_some());
-        if has_selection {
+        if has_selection && self.diagram_focused() {
             egui::Panel::right("format").resizable(true).default_size(320.0).size_range(220.0..=560.0).show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.format_panel(ui));
             });
@@ -934,7 +938,8 @@ impl App {
                     ShapeKind::External => "extern",
                     ShapeKind::Package => "package",
                     ShapeKind::Directory => "dir",
-                    ShapeKind::File => "file",
+                    ShapeKind::File => "text file",
+                    ShapeKind::BinaryFile => "bin file",
                     ShapeKind::Set => "set",
                     ShapeKind::Vector => "vector",
                     ShapeKind::Dictionary => "dict",
@@ -1056,7 +1061,8 @@ impl App {
         } else if single_class {
             let title = match n.kind {
                 ShapeKind::Trait => "Trait",
-                ShapeKind::File => "File",
+                ShapeKind::File => "Text file",
+                ShapeKind::BinaryFile => "Binary file",
                 ShapeKind::Directory => "Directory",
                 ShapeKind::Enum => "Enum",
                 ShapeKind::External => "External type",
@@ -1068,7 +1074,7 @@ impl App {
                     ui.label("Name");
                     let hint = match n.kind {
                         ShapeKind::External => "e.g. tokio::sync::Notify",
-                        ShapeKind::File => "e.g. config/settings.toml",
+                        ShapeKind::File | ShapeKind::BinaryFile => "e.g. config/settings.toml",
                         ShapeKind::Directory => "e.g. data/<Table>/",
                         _ => "",
                     };
@@ -1106,6 +1112,27 @@ impl App {
                                 ui.add(egui::TextEdit::singleline(period).hint_text("every 1 s").desired_width(f32::INFINITY));
                             }
                         });
+                        ui.end_row();
+                    }
+                    if n.kind == ShapeKind::File {
+                        ui.label("Format").on_hover_text("What the text in the file is; can be changed");
+                        egui::ComboBox::from_id_salt("file_format")
+                            .selected_text(if n.format.is_empty() { "txt" } else { n.format.as_str() })
+                            .show_ui(ui, |ui| {
+                                for f in crate::model::TEXT_FORMATS {
+                                    ui.selectable_value(&mut n.format, f.to_owned(), f);
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("Contents");
+                        if ui.button("Edit contents").on_hover_text("Or double-click the file").clicked() {
+                            self.open_file_request = Some(n.id);
+                        }
+                        ui.end_row();
+                    }
+                    if n.kind == ShapeKind::BinaryFile {
+                        ui.label("Type");
+                        ui.label("binary (chosen when created)");
                         ui.end_row();
                     }
                     if n.kind == ShapeKind::Enum {

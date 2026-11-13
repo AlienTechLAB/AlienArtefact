@@ -194,7 +194,7 @@ pub fn export(d: &Diagram) -> String {
                 if let Some(pts) = outline(n.kind, r) {
                     let _ = writeln!(out, r#"<polygon points="{}" {paint}/>"#, points(&pts));
                 }
-                if n.kind == ShapeKind::File {
+                if n.kind.is_file() {
                     let f = crate::model::file_fold(r.width(), r.height());
                     let fold = [
                         egui::pos2(r.right() - f, r.top()),
@@ -212,6 +212,10 @@ pub fn export(d: &Diagram) -> String {
             text_block(&mut out, center, stereotype, n.font_size * 0.85, n.stroke);
         }
         text_block(&mut out, n.text_rect().center(), &d.display_text(n), n.font_size, n.text_color);
+        if let Some(tag) = n.file_tag() {
+            let at = egui::pos2(r.center().x, r.bottom() - n.font_size * 0.9);
+            text_block(&mut out, at, &tag, n.font_size * 0.72, n.text_color);
+        }
         if n.kind.is_object() {
             let layout = n.body_layout();
             for y in &layout.separators {
