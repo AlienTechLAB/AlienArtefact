@@ -326,6 +326,13 @@ impl App {
         self.dock.find_active_focused().map(|(_, id)| *id)
     }
 
+    /// The kept text selection, when the focused tab is the editor of that file.
+    pub fn focused_file_selection(&mut self) -> Option<crate::code::CodeSelection> {
+        let i = self.focused_item().and_then(|id| self.index_of(id))?;
+        let Content::FileText { diagram, node } = self.tabs[i].content else { return None };
+        self.code_selection.clone().filter(|s| s.diagram == diagram && s.node == node)
+    }
+
     /// Whether the focused tab is a diagram (or no tab has focus yet).
     pub fn diagram_focused(&mut self) -> bool {
         match self.focused_item().and_then(|id| self.index_of(id)) {
@@ -647,7 +654,14 @@ impl App {
         });
         ui.separator();
         let format = crate::model::text_format(&n.text);
-        crate::code::code_editor(ui, ("file", id), &mut n.content, format);
+        if let Some((a, b)) = crate::code::code_editor(ui, ("file", id), &mut n.content, format) {
+            let sel = crate::code::selection_of(&n.content, a, b, &n.text, diagram, node);
+            if self.code_selection.as_ref() != Some(&sel) {
+                self.code_selection = Some(sel);
+                // The status bar was drawn before this tab; show the change at once.
+                ui.ctx().request_repaint();
+            }
+        }
     }
 
     fn show_text(&mut self, i: usize, ui: &mut Ui) {

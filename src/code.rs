@@ -140,8 +140,102 @@ fn value(s: &str, p: &Palette, put: &mut impl FnMut(&str, Color32)) {
     }
 }
 
+/// A position in a text: line and column, both counted from 1 (columns in characters).
+pub type LineCol = (usize, usize);
+
+/// A selected part of a text file, from `start` up to (not including) `end`, as in VS Code.
+/// The app keeps the last one so it can be referred to later (e.g. when asking an AI about it).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeSelection {
+    /// The diagram tab holding the file, and the file object in it.
+    pub diagram: u64,
+    pub node: u64,
+    /// The file's name when the selection was made.
+    pub file: String,
+    pub start: LineCol,
+    pub end: LineCol,
+    /// The selected text (empty when only the cursor is placed).
+    pub text: String,
+}
+
+impl CodeSelection {
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+
+    /// How many lines the selection covers (0 when nothing is selected). A selection ending at
+    /// the very start of a line does not count that line.
+    pub fn line_count(&self) -> usize {
+        if self.is_empty() {
+            return 0;
+        }
+        let last = if self.end.1 == 1 && self.end.0 > self.start.0 { self.end.0 - 1 } else { self.end.0 };
+        last - self.start.0 + 1
+    }
+
+    /// A short reference to the selected part: `file:line:col-line:col`, or `file:line:col` for
+    /// a cursor.
+    pub fn reference(&self) -> String {
+        let (l1, c1) = self.start;
+        let (l2, c2) = self.end;
+        if self.is_empty() {
+            format!("{}:{l1}:{c1}", self.file)
+        } else {
+            format!("{}:{l1}:{c1}-{l2}:{c2}", self.file)
+        }
+    }
+
+    /// What the status bar says about it.
+    pub fn status(&self) -> String {
+        let (line, col) = self.end;
+        match self.line_count() {
+            0 => format!("Ln {line}, Col {col}"),
+            n => {
+                let chars = self.text.chars().count();
+                let lines = if n == 1 { "1 line".to_owned() } else { format!("{n} lines") };
+                format!("Ln {line}, Col {col}  ({lines}, {chars} characters selected)")
+            }
+        }
+    }
+}
+
+/// The line and column of character `index` (counted from 0) in `text`.
+pub fn line_col(text: &str, index: usize) -> LineCol {
+    let mut line = 1;
+    let mut col = 1;
+    for c in text.chars().take(index) {
+        if c == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+/// The selection between character indices `a` and `b` (either order) of `text`.
+pub fn selection_of(text: &str, a: usize, b: usize, file: &str, diagram: u64, node: u64) -> CodeSelection {
+    let (from, to) = (a.min(b), a.max(b));
+    CodeSelection {
+        diagram,
+        node,
+        file: file.to_owned(),
+        start: line_col(text, from),
+        end: line_col(text, to),
+        text: text.chars().skip(from).take(to - from).collect(),
+    }
+}
+
 /// A code editor filling the space: line numbers on the left, highlighted text on the right.
-pub fn code_editor(ui: &mut Ui, id_salt: impl std::hash::Hash + std::fmt::Debug, text: &mut String, format: &str) {
+/// Returns the selection (character indices, start and end) while the editor has focus.
+pub fn code_editor(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    text: &mut String,
+    format: &str,
+) -> Option<(usize, usize)> {
+    let mut selection = None;
     let lines = text.split('\n').count().max(1);
     let digits = lines.to_string().len().max(3);
     let font = TextStyle::Monospace.resolve(ui.style());
@@ -163,17 +257,23 @@ pub fn code_editor(ui: &mut Ui, id_salt: impl std::hash::Hash + std::fmt::Debug,
                     .desired_width(ui.fonts_mut(|f| f.glyph_width(&font, '0')) * digits as f32 + 4.0)
                     .desired_rows(lines),
             );
-            ui.add_sized(
-                ui.available_size(),
-                egui::TextEdit::multiline(text)
-                    .code_editor()
-                    .frame(egui::Frame::NONE)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(lines)
-                    .layouter(&mut layouter),
-            );
+            let out = egui::TextEdit::multiline(text)
+                .code_editor()
+                .frame(egui::Frame::NONE)
+                .desired_width(f32::INFINITY)
+                .min_size(ui.available_size())
+                .desired_rows(lines)
+                .layouter(&mut layouter)
+                .show(ui);
+            if out.response.has_focus() {
+                if let Some(r) = out.cursor_range {
+                    let [a, b] = r.sorted_cursors();
+                    selection = Some((a.index.0, b.index.0));
+                }
+            }
         });
     });
+    selection
 }
 
 #[cfg(test)]
@@ -200,6 +300,25 @@ mod tests {
         // Nothing is lost or reordered.
         let all: String = c.iter().map(|(s, _)| s.as_str()).collect();
         assert_eq!(all, "# config\n[server]\nport = 8080\nname = \"mech\" # main\ndebug = true\n");
+    }
+
+    #[test]
+    fn selections_know_their_lines_and_columns() {
+        let text = "fn main() {\n    let x = 1;\n}\n";
+        let cursor = selection_of(text, 16, 16, "main.rs", 1, 2);
+        assert_eq!((cursor.start, cursor.line_count()), ((2, 5), 0));
+        assert_eq!(cursor.reference(), "main.rs:2:5");
+        assert_eq!(cursor.status(), "Ln 2, Col 5");
+
+        // "let x" on line 2, selected backwards.
+        let s = selection_of(text, 21, 16, "main.rs", 1, 2);
+        assert_eq!((s.start, s.end, s.text.as_str()), ((2, 5), (2, 10), "let x"));
+        assert_eq!((s.line_count(), s.reference()), (1, "main.rs:2:5-2:10".to_owned()));
+
+        // Whole lines 1-2: ending at the start of line 3 does not count line 3.
+        let s = selection_of(text, 0, 27, "main.rs", 1, 2);
+        assert_eq!((s.end, s.line_count()), ((3, 1), 2));
+        assert_eq!(s.status(), "Ln 3, Col 1  (2 lines, 27 characters selected)");
     }
 
     #[test]

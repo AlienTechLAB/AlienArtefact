@@ -68,6 +68,9 @@ pub struct App {
     /// The tab being renamed, and the name typed so far.
     pub renaming: Option<(usize, String)>,
     pub rename_focus: bool,
+    /// The last place selected in a text file's editor: which file, which lines and columns, and
+    /// the text. Kept after the editor loses focus, so the selection can be referred to later.
+    pub code_selection: Option<crate::code::CodeSelection>,
     /// Where each tab's button was drawn this frame (the rename field is drawn over it).
     pub tab_rects: std::collections::HashMap<u64, egui::Rect>,
     /// Where the tabs are: groups, splits and floating windows.
@@ -131,6 +134,7 @@ impl Default for App {
             saved_names: vec!["Diagram 1".into()],
             renaming: None,
             rename_focus: false,
+            code_selection: None,
             tab_rects: Default::default(),
             dock: crate::model::Layout::new(vec![1]),
             next_item_id: 2,
@@ -743,7 +747,13 @@ impl App {
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
+        let selection = self.focused_file_selection();
         ui.horizontal(|ui| {
+            if let Some(sel) = selection {
+                // In a file's editor: where the cursor is and how much is selected.
+                ui.label(sel.status()).on_hover_text(sel.reference());
+                ui.separator();
+            }
             ui.label(format!(
                 "{} shapes, {} lines  |  zoom {:.0}%",
                 self.diagram.nodes.len(),
