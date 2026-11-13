@@ -1,4 +1,4 @@
-//! Application shell: menus, toolbar, shape palette, format panel, undo/redo and files.
+//! Application shell: menus, shape palette, format panel, undo/redo and files.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -42,33 +42,69 @@ pub fn rect_button(ui: &mut Ui, label: &str, chosen: bool) -> egui::Response {
     resp
 }
 
-/// egui's dark theme recoloured to match the neon canvas: navy panels, blue widgets, cyan
-/// selection.
-fn neon_visuals(v: &mut egui::Visuals) {
+/// egui's look for a theme: the dark themes recolour egui's dark visuals to match their canvas.
+fn theme_visuals(theme: crate::render::Theme) -> egui::Visuals {
+    use crate::render::Theme;
     let rgb = Color32::from_rgb;
-    v.panel_fill = rgb(11, 15, 33);
-    v.window_fill = rgb(15, 20, 42);
-    v.window_stroke = Stroke::new(1.0, rgb(40, 56, 110));
-    v.extreme_bg_color = rgb(6, 9, 22);
-    v.faint_bg_color = rgb(16, 22, 46);
-    v.code_bg_color = rgb(16, 22, 46);
-    v.hyperlink_color = crate::render::NEON_CYAN;
-    v.selection.bg_fill = rgb(28, 92, 170);
-    v.selection.stroke = Stroke::new(1.0, rgb(170, 225, 255));
+    // panel, window, extreme, faint, inactive, inactive weak, hovered, active, frame stroke,
+    // selection, selection text.
+    let tint = match theme {
+        Theme::Light => return egui::Visuals::light(),
+        Theme::Graphite => return egui::Visuals::dark(),
+        Theme::Neon => [
+            rgb(11, 15, 33),
+            rgb(15, 20, 42),
+            rgb(6, 9, 22),
+            rgb(16, 22, 46),
+            rgb(24, 33, 68),
+            rgb(20, 28, 58),
+            rgb(34, 50, 100),
+            rgb(40, 62, 128),
+            rgb(30, 42, 84),
+            rgb(28, 92, 170),
+            rgb(170, 225, 255),
+        ],
+        Theme::Amethyst => [
+            rgb(22, 13, 34),
+            rgb(28, 18, 44),
+            rgb(13, 7, 22),
+            rgb(32, 20, 48),
+            rgb(48, 30, 72),
+            rgb(40, 25, 62),
+            rgb(68, 42, 104),
+            rgb(86, 52, 132),
+            rgb(58, 36, 86),
+            rgb(118, 56, 170),
+            rgb(240, 214, 255),
+        ],
+    };
+    let [panel, window, extreme, faint, inactive, inactive_weak, hovered, active, frame, sel, sel_text] = tint;
+    let accent = theme.palette().map_or(rgb(0, 120, 215), |p| p.line);
+    let mut v = egui::Visuals::dark();
+    v.panel_fill = panel;
+    v.window_fill = window;
+    v.window_stroke = Stroke::new(1.0, frame);
+    v.extreme_bg_color = extreme;
+    v.faint_bg_color = faint;
+    v.code_bg_color = faint;
+    v.hyperlink_color = accent;
+    v.selection.bg_fill = sel;
+    v.selection.stroke = Stroke::new(1.0, sel_text);
     let w = &mut v.widgets;
-    w.noninteractive.bg_fill = rgb(11, 15, 33);
-    w.noninteractive.weak_bg_fill = rgb(11, 15, 33);
-    w.noninteractive.bg_stroke = Stroke::new(1.0, rgb(30, 42, 84));
-    w.inactive.bg_fill = rgb(24, 33, 68);
-    w.inactive.weak_bg_fill = rgb(20, 28, 58);
-    w.hovered.bg_fill = rgb(34, 50, 100);
-    w.hovered.weak_bg_fill = rgb(30, 44, 90);
-    w.hovered.bg_stroke = Stroke::new(1.0, rgb(86, 160, 230));
-    w.active.bg_fill = rgb(40, 62, 128);
-    w.active.weak_bg_fill = rgb(40, 62, 128);
-    w.active.bg_stroke = Stroke::new(1.0, crate::render::NEON_CYAN);
-    w.open.bg_fill = rgb(24, 33, 68);
-    w.open.weak_bg_fill = rgb(24, 33, 68);
+    w.noninteractive.bg_fill = panel;
+    w.noninteractive.weak_bg_fill = panel;
+    w.noninteractive.bg_stroke = Stroke::new(1.0, frame);
+    w.inactive.bg_fill = inactive;
+    w.inactive.weak_bg_fill = inactive_weak;
+    w.hovered.bg_fill = hovered;
+    w.hovered.weak_bg_fill = hovered;
+    w.hovered.bg_stroke = Stroke::new(1.0, accent.gamma_multiply(0.8));
+    w.active.bg_fill = active;
+    w.active.weak_bg_fill = active;
+    w.active.bg_stroke = Stroke::new(1.0, accent);
+    w.open.bg_fill = inactive;
+    w.open.weak_bg_fill = inactive;
+    v
 }
 
 /// The diagrams icon: a small flowchart (a box, a decision diamond, two circles and the boxes
@@ -194,10 +230,10 @@ pub struct App {
     pub open_file_request: Option<Id>,
     /// An object's name as it was when its name field got the focus (restored if left empty).
     pub name_before_edit: String,
-    /// Dark theme (the default); switchable in the toolbar and the View menu.
-    pub dark: bool,
-    /// The theme last applied to egui, so it is only changed when `dark` changes.
-    applied_dark: Option<bool>,
+    /// The colour theme (Neon by default); chosen in the View menu and Preferences.
+    pub theme: crate::render::Theme,
+    /// The theme last applied to egui, so it is only changed when `theme` changes.
+    applied_theme: Option<crate::render::Theme>,
 }
 
 impl Default for App {
@@ -250,8 +286,8 @@ impl Default for App {
             last_palette_view: PaletteView::Objects,
             open_file_request: None,
             name_before_edit: String::new(),
-            dark: true,
-            applied_dark: None,
+            theme: crate::render::Theme::default(),
+            applied_theme: None,
         }
     }
 }
@@ -259,11 +295,12 @@ impl Default for App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        if self.applied_dark != Some(self.dark) {
-            ctx.set_theme(if self.dark { egui::Theme::Dark } else { egui::Theme::Light });
-            ctx.style_mut_of(egui::Theme::Dark, |s| neon_visuals(&mut s.visuals));
-            crate::render::set_dark(self.dark);
-            self.applied_dark = Some(self.dark);
+        if self.applied_theme != Some(self.theme) {
+            let egui_theme = if self.theme.is_dark() { egui::Theme::Dark } else { egui::Theme::Light };
+            ctx.set_theme(egui_theme);
+            ctx.set_visuals_of(egui_theme, theme_visuals(self.theme));
+            crate::render::set_theme(self.theme);
+            self.applied_theme = Some(self.theme);
         }
         self.handle_close(&ctx);
         // While Preferences is open the main window takes no shortcuts.
@@ -272,7 +309,6 @@ impl eframe::App for App {
         }
 
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         // VS Code-style: a strip of category icons, and the palette of the chosen category beside it.
         // No inner margin, so the highlight bar of the shown category sits on the window's edge.
@@ -325,7 +361,7 @@ impl App {
         if ctx.input(|i| i.viewport().focused) == Some(true) {
             ctx.send_viewport_cmd_to(prefs, ViewportCommand::Focus);
         }
-        let size = vec2(420.0, 280.0);
+        let size = vec2(360.0, 280.0);
         let mut builder = egui::ViewportBuilder::default()
             .with_title("Preferences")
             .with_inner_size(size)
@@ -342,17 +378,20 @@ impl App {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.heading("Preferences");
                 ui.add_space(8.0);
-                ui.strong("Appearance");
-                ui.checkbox(&mut self.dark, "Dark theme");
-                ui.add_space(8.0);
-                ui.strong("Diagrams");
-                ui.checkbox(&mut self.show_grid, "Show grid");
-                ui.checkbox(&mut self.snap, "Snap to grid");
-                ui.add_space(12.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-                    if ui.button("Close").clicked() {
-                        close = true;
+                ui.strong("Theme");
+                ui.add_space(4.0);
+                ui.spacing_mut().item_spacing.y = 2.0;
+                for t in crate::render::Theme::ALL {
+                    if rect_button(ui, t.name(), self.theme == t).clicked() {
+                        self.theme = t;
                     }
+                }
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                    ui.allocate_ui(vec2(100.0, 26.0), |ui| {
+                        if rect_button(ui, "Close", false).clicked() {
+                            close = true;
+                        }
+                    });
                 });
             });
             if ui.input(|i| i.viewport().close_requested() || i.key_pressed(egui::Key::Escape)) {
@@ -873,14 +912,13 @@ impl App {
                 ui.separator();
                 ui.checkbox(&mut self.show_grid, "Grid");
                 ui.checkbox(&mut self.snap, "Snap to grid");
-                ui.checkbox(&mut self.dark, "Dark theme");
+                ui.separator();
+                ui.menu_button("Theme", |ui| {
+                    for t in crate::render::Theme::ALL {
+                        ui.radio_value(&mut self.theme, t, t.name());
+                    }
+                });
             });
-        });
-    }
-
-    fn toolbar(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.dark, "Dark").on_hover_text("Dark theme (also in View)");
         });
     }
 
@@ -969,7 +1007,7 @@ impl App {
     /// The icon strip (VS Code's activity bar). For now one icon: the diagram palette. Clicking
     /// it shows or hides the palette panel.
     fn activity_bar(&mut self, ui: &mut Ui) {
-        let accent = if self.dark { crate::render::NEON_CYAN } else { Color32::from_rgb(0, 120, 215) };
+        let accent = self.theme.palette().map_or(Color32::from_rgb(0, 120, 215), |p| p.line);
         ui.add_space(6.0);
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
         let shown = self.palette_view.is_some();

@@ -11,18 +11,132 @@ use crate::model::{
 };
 
 // ------------------------------------------------------------------------------------------------
-// Dark theme for the canvas. Diagrams keep their real colours (they are saved and exported as
-// drawn in the light theme); on screen in the dark theme, light fills become dark surfaces with a
-// hint of their hue, and dark lines and text become light. Strong colours are left alone.
+// Themes for the canvas. Diagrams keep their real colours (they are saved and exported as drawn
+// in the light theme); on screen in a dark theme, light fills become dark surfaces with a hint of
+// their hue, and dark lines and text take the theme's colours. Strong colours are left alone.
 
-static DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The colour themes of the app.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Theme {
+    /// Deep navy, cyan outlines and violet relations that glow.
+    #[default]
+    Neon,
+    /// Neutral dark grey, no glow.
+    Graphite,
+    /// Deep purple, lilac outlines and pink relations that glow.
+    Amethyst,
+    /// White canvas; diagrams in their own colours.
+    Light,
+}
 
-pub fn set_dark(on: bool) {
-    DARK.store(on, std::sync::atomic::Ordering::Relaxed);
+impl Theme {
+    pub const ALL: [Theme; 4] = [Theme::Neon, Theme::Graphite, Theme::Amethyst, Theme::Light];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Theme::Neon => "Neon",
+            Theme::Graphite => "Graphite",
+            Theme::Amethyst => "Amethyst",
+            Theme::Light => "Light",
+        }
+    }
+
+    pub fn is_dark(self) -> bool {
+        self != Theme::Light
+    }
+
+    /// The canvas colours of a dark theme (`None` for the light one).
+    pub fn palette(self) -> Option<Palette> {
+        let rgb = Color32::from_rgb;
+        match self {
+            Theme::Neon => Some(Palette {
+                surface: rgb(16, 23, 50),
+                frame: rgb(12, 17, 38),
+                ink: rgb(214, 228, 255),
+                line: rgb(86, 196, 255),
+                relation: rgb(178, 132, 255),
+                canvas: rgb(7, 10, 26),
+                grid: rgb(17, 25, 54),
+                badge: rgb(18, 26, 56),
+                glow: true,
+            }),
+            Theme::Graphite => Some(Palette {
+                surface: rgb(45, 46, 50),
+                frame: rgb(36, 37, 41),
+                ink: rgb(218, 220, 224),
+                line: rgb(196, 199, 206),
+                relation: rgb(150, 162, 186),
+                canvas: rgb(30, 31, 34),
+                grid: rgb(42, 43, 47),
+                badge: rgb(50, 52, 57),
+                glow: false,
+            }),
+            Theme::Amethyst => Some(Palette {
+                surface: rgb(38, 24, 56),
+                frame: rgb(28, 18, 42),
+                ink: rgb(238, 226, 255),
+                line: rgb(206, 140, 255),
+                relation: rgb(255, 130, 196),
+                canvas: rgb(17, 10, 28),
+                grid: rgb(34, 22, 50),
+                badge: rgb(42, 28, 62),
+                glow: true,
+            }),
+            Theme::Light => None,
+        }
+    }
+
+    fn index(self) -> u8 {
+        Theme::ALL.iter().position(|t| *t == self).unwrap_or(0) as u8
+    }
+}
+
+/// How a dark theme shows diagrams on the canvas.
+#[derive(Clone, Copy, Debug)]
+pub struct Palette {
+    /// Object fills (light fills become this, with a hint of their hue).
+    pub surface: Color32,
+    /// Package frame fills.
+    pub frame: Color32,
+    /// Text.
+    pub ink: Color32,
+    /// Outlines and pointers.
+    pub line: Color32,
+    /// Relations and package frames.
+    pub relation: Color32,
+    pub canvas: Color32,
+    pub grid: Color32,
+    pub badge: Color32,
+    /// Lines get a soft halo.
+    pub glow: bool,
+}
+
+static THEME: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(3);
+
+pub fn set_theme(t: Theme) {
+    THEME.store(t.index(), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn theme() -> Theme {
+    Theme::ALL[THEME.load(std::sync::atomic::Ordering::Relaxed) as usize % Theme::ALL.len()]
 }
 
 pub fn is_dark() -> bool {
-    DARK.load(std::sync::atomic::Ordering::Relaxed)
+    theme().is_dark()
+}
+
+fn pal() -> Option<Palette> {
+    theme().palette()
+}
+
+/// Outlines and pointers in the current theme (`fallback` in the light theme).
+pub fn outline_color() -> Color32 {
+    pal().map_or(Color32::BLACK, |p| p.line)
+}
+
+/// Relations and package frames in the current theme.
+pub fn relation_color() -> Color32 {
+    pal().map_or(Color32::BLACK, |p| p.relation)
 }
 
 /// Perceived lightness, 0 (black) to 1 (white).
@@ -39,39 +153,41 @@ fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(f(ar, br), f(ag, bg), f(ab, bb), aa)
 }
 
-// The dark theme is "neon": deep navy surfaces, cyan outlines and violet relations that glow.
-const DARK_SURFACE: Color32 = Color32::from_rgb(16, 23, 50);
-const DARK_INK: Color32 = Color32::from_rgb(214, 228, 255);
-/// Outlines and pointers in the dark theme.
-pub const NEON_CYAN: Color32 = Color32::from_rgb(86, 196, 255);
-/// Relations (and other secondary lines) in the dark theme.
-pub const NEON_VIOLET: Color32 = Color32::from_rgb(178, 132, 255);
-
 /// A fill as shown in the current theme.
 pub fn tone_fill(c: Color32) -> Color32 {
-    if is_dark() && c.a() > 0 && lightness(c) > 0.6 { mix(DARK_SURFACE, c, 0.12) } else { c }
+    match pal() {
+        Some(p) if c.a() > 0 && lightness(c) > 0.6 => mix(p.surface, c, 0.12),
+        _ => c,
+    }
 }
 
 /// A package frame's fill: in the dark theme only a step above the canvas, so the objects inside
 /// (`tone_fill`) stand out from it.
 pub fn tone_frame(c: Color32) -> Color32 {
-    if is_dark() && c.a() > 0 && lightness(c) > 0.6 { mix(Color32::from_rgb(12, 17, 38), c, 0.05) } else { c }
+    match pal() {
+        Some(p) if c.a() > 0 && lightness(c) > 0.6 => mix(p.frame, c, 0.05),
+        _ => c,
+    }
 }
 
 /// A line or text colour as shown in the current theme.
 pub fn tone_ink(c: Color32) -> Color32 {
-    if is_dark() && c.a() > 0 && lightness(c) < 0.35 { mix(DARK_INK, c, 0.15) } else { c }
+    match pal() {
+        Some(p) if c.a() > 0 && lightness(c) < 0.35 => mix(p.ink, c, 0.15),
+        _ => c,
+    }
 }
 
-/// A shape's outline as shown in the current theme: dark lines become neon `glow` lines.
-pub fn tone_line(c: Color32, glow: Color32) -> Color32 {
-    if is_dark() && c.a() > 0 && lightness(c) < 0.35 { mix(glow, c, 0.1) } else { c }
+/// A shape's outline as shown in the current theme: dark lines become the theme's `line`
+/// colour (`outline_color()` or `relation_color()`).
+pub fn tone_line(c: Color32, line: Color32) -> Color32 {
+    if is_dark() && c.a() > 0 && lightness(c) < 0.35 { mix(line, c, 0.1) } else { c }
 }
 
 /// The halo drawn under a line of colour `c` in the dark theme (none in the light theme):
 /// (width added to the line, colour), widest first.
 pub fn glow_layers(c: Color32) -> [(f32, Color32); 2] {
-    if is_dark() {
+    if pal().is_some_and(|p| p.glow) {
         [(7.0, c.gamma_multiply(0.07)), (3.5, c.gamma_multiply(0.16))]
     } else {
         [(0.0, Color32::TRANSPARENT); 2]
@@ -80,16 +196,16 @@ pub fn glow_layers(c: Color32) -> [(f32, Color32); 2] {
 
 /// The canvas behind the diagram.
 pub fn canvas_color() -> Color32 {
-    if is_dark() { Color32::from_rgb(7, 10, 26) } else { Color32::WHITE }
+    pal().map_or(Color32::WHITE, |p| p.canvas)
 }
 
 pub fn grid_color() -> Color32 {
-    if is_dark() { Color32::from_rgb(17, 25, 54) } else { Color32::from_gray(235) }
+    pal().map_or(Color32::from_gray(235), |p| p.grid)
 }
 
 /// Background of the small pointer badges.
 fn badge_color() -> Color32 {
-    if is_dark() { Color32::from_rgb(18, 26, 56) } else { Color32::from_gray(248) }
+    pal().map_or(Color32::from_gray(248), |p| p.badge)
 }
 
 /// Per-object text a shape draws itself: the stereotype line and, for a package tab, the name.
@@ -313,7 +429,7 @@ mod theme_tests {
 
     #[test]
     fn dark_theme_swaps_light_fills_and_dark_ink_only() {
-        set_dark(true);
+        set_theme(Theme::Neon);
         let white = Color32::WHITE;
         let black = Color32::BLACK;
         let pastel = Color32::from_rgb(225, 236, 250);
@@ -325,10 +441,17 @@ mod theme_tests {
         assert!(lightness(tone_ink(black)) > 0.7, "black lines and text become light");
         assert_eq!(tone_ink(red), red, "strong colours stay");
         assert_eq!(tone_fill(Color32::TRANSPARENT), Color32::TRANSPARENT);
-        assert!(lightness(tone_line(black, NEON_CYAN)) > 0.5, "outlines become neon");
-        assert!(glow_layers(NEON_CYAN)[0].1.a() > 0, "and glow");
-        set_dark(false);
-        assert_eq!(glow_layers(NEON_CYAN)[0].1, Color32::TRANSPARENT, "no glow in the light theme");
+        assert!(lightness(tone_line(black, outline_color())) > 0.5, "outlines become neon");
+        assert!(glow_layers(outline_color())[0].1.a() > 0, "and glow");
+        set_theme(Theme::Graphite);
+        assert!(lightness(tone_ink(black)) > 0.7, "every dark theme lights up dark ink");
+        assert_eq!(glow_layers(outline_color())[0].1, Color32::TRANSPARENT, "Graphite does not glow");
+        for t in Theme::ALL {
+            set_theme(t);
+            assert_eq!(theme(), t);
+        }
+        set_theme(Theme::Light);
+        assert_eq!(glow_layers(outline_color())[0].1, Color32::TRANSPARENT, "no glow in the light theme");
         assert_eq!(tone_fill(white), white);
         assert_eq!(tone_ink(black), black);
     }

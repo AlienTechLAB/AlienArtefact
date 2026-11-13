@@ -11,7 +11,7 @@ use crate::app::App;
 use crate::model::{color, label_center, End, Id, LinkKind, ShapeKind};
 use crate::render::{
     canvas_color, grid_color, head_len, layout_centered, paint_badge, paint_edge, paint_members, paint_shape,
-    paint_text, tone_fill, tone_frame, tone_ink, tone_line, glow_layers, NEON_CYAN, NEON_VIOLET, Deco,
+    paint_text, tone_fill, tone_frame, tone_ink, tone_line, glow_layers, outline_color, relation_color, Deco,
 };
 
 pub const GRID: f32 = 10.0;
@@ -482,8 +482,8 @@ impl App {
             self.diagram.nodes.iter().partition(|n| n.kind == ShapeKind::Package);
         for n in packages.into_iter().chain(objects) {
             let sr = self.rect_to_screen(n.rect());
-            // Packages are frames: violet in the dark theme, the objects cyan.
-            let neon = if n.kind == ShapeKind::Package { NEON_VIOLET } else { NEON_CYAN };
+            // Packages are frames in the theme's relation colour, objects in its outline colour.
+            let neon = if n.kind == ShapeKind::Package { relation_color() } else { outline_color() };
             let line = tone_line(color(n.stroke), neon);
             let stroke = Stroke::new(n.stroke_width * z, line);
             let stereotype = n.stereotype_text();
@@ -525,8 +525,8 @@ impl App {
             }
             let (pattern, start, end) = e.look();
             let invalid = self.link_error.as_ref().is_some_and(|err| err.id == e.id);
-            // Pointers are cyan, relations violet in the dark theme.
-            let neon = if e.relation.is_some() { NEON_VIOLET } else { NEON_CYAN };
+            // Pointers in the theme's outline colour, relations in its relation colour.
+            let neon = if e.relation.is_some() { relation_color() } else { outline_color() };
             let col = if invalid { ERROR } else { tone_line(color(e.color), neon) };
             if invalid {
                 painter.add(Shape::line(sp.clone(), Stroke::new(e.width * z + 6.0, ERROR.gamma_multiply(0.25))));

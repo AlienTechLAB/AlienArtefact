@@ -4,7 +4,7 @@
 //! or out into floating windows. The layout is saved with the project.
 //!
 //! Diagram tabs share the app's editing machinery. The **active** diagram (the one the format panel,
-//! toolbar and shortcuts work on) keeps its state in `App`'s own fields (`diagram`, `selection`,
+//! diagram strip and shortcuts work on) keeps its state in `App`'s own fields (`diagram`, `selection`,
 //! undo history, view, ...); every other diagram keeps its state in a `TabState`. Drawing another
 //! visible diagram swaps its state in for the duration of the drawing; clicking into it keeps it
 //! swapped in, making it the active one.
@@ -198,7 +198,7 @@ impl App {
         self.active.map(|a| self.tabs[a].id)
     }
 
-    /// Makes diagram tab `i` the active one (the format panel, toolbar and shortcuts work on it).
+    /// Makes diagram tab `i` the active one (the format panel, diagram strip and shortcuts work on it).
     pub fn switch_tab(&mut self, i: usize) {
         if self.active == Some(i) || i >= self.tabs.len() || !self.tabs[i].is_diagram() || self.link_error.is_some() {
             return;
