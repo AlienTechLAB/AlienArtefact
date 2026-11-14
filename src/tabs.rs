@@ -72,6 +72,8 @@ pub enum Content {
     FileText { diagram: ItemId, node: Id },
     /// A text file on disk (opened from the explorer); saving writes it back.
     DiskText { path: std::path::PathBuf, text: String, saved: String },
+    /// The system shell. Not saved with the project (it is a running program).
+    Terminal(Box<crate::terminal::Terminal>),
 }
 
 /// The kinds of tab that can be created.
@@ -80,6 +82,7 @@ pub enum NewKind {
     Diagram,
     Text,
     Image,
+    Terminal,
 }
 
 impl NewKind {
@@ -88,6 +91,7 @@ impl NewKind {
             NewKind::Diagram => "Diagram",
             NewKind::Text => "Text file",
             NewKind::Image => "Image",
+            NewKind::Terminal => "Terminal",
         }
     }
 }
@@ -289,6 +293,17 @@ impl App {
             NewKind::Diagram => Content::Diagram(Some(TabState::new(Diagram::default(), false))),
             NewKind::Text => Content::Text { text: String::new(), saved: String::new() },
             NewKind::Image => Content::Image { path: String::new(), saved: String::new() },
+            // In the open folder, if any.
+            NewKind::Terminal => {
+                let cwd = self.explorer.as_ref().map(|e| e.root.clone());
+                match crate::terminal::Terminal::start(cwd.as_deref(), self.egui_ctx.clone()) {
+                    Ok(t) => Content::Terminal(Box::new(t)),
+                    Err(e) => {
+                        let msg = format!("The terminal could not start: {e}");
+                        Content::Text { text: msg.clone(), saved: msg }
+                    }
+                }
+            }
         };
         self.tabs.push(Tab { id, name: name.clone(), content });
         if let Some(path) = group {
@@ -554,7 +569,7 @@ impl App {
             Content::Text { text, .. } => ItemContent::Text(text.clone()),
             Content::Image { path, .. } => ItemContent::Image(path.clone()),
             // A second view of the same file adds nothing.
-            Content::FileText { .. } | Content::DiskText { .. } => return,
+            Content::FileText { .. } | Content::DiskText { .. } | Content::Terminal(_) => return,
         };
         let new_id = self.alloc_item_id();
         self.next_item_id = new_id + 1;
@@ -624,6 +639,8 @@ impl App {
     pub fn project_items(&self) -> Vec<ProjectItem> {
         self.tabs
             .iter()
+            // Terminals are running programs, not saved.
+            .filter(|t| !matches!(t.content, Content::Terminal(_)))
             .map(|t| ProjectItem {
                 id: t.id,
                 name: t.name.clone(),
@@ -634,6 +651,7 @@ impl App {
                     Content::Image { path, .. } => ItemContent::Image(path.clone()),
                     Content::FileText { diagram, node } => ItemContent::FileText { diagram: *diagram, node: *node },
                     Content::DiskText { path, .. } => ItemContent::DiskFile(path.display().to_string()),
+                    Content::Terminal(_) => unreachable!("filtered out above"),
                 },
             })
             .collect()
@@ -647,6 +665,7 @@ impl App {
             Content::Image { path, saved } => path != saved,
             Content::FileText { .. } => false,
             Content::DiskText { text, saved, .. } => text != saved,
+            Content::Terminal(_) => false,
         }
     }
 
@@ -655,7 +674,7 @@ impl App {
     fn content_tab_names(&self) -> Vec<String> {
         self.tabs
             .iter()
-            .filter(|t| !matches!(t.content, Content::FileText { .. } | Content::DiskText { .. }))
+            .filter(|t| !matches!(t.content, Content::FileText { .. } | Content::DiskText { .. } | Content::Terminal(_)))
             .map(|t| t.name.clone())
             .collect()
     }
@@ -677,6 +696,7 @@ impl App {
                 Content::FileText { .. } => {}
                 // Written by `save_disk_files` before the project is saved.
                 Content::DiskText { text, saved, .. } => *saved = text.clone(),
+                Content::Terminal(_) => {}
             }
         }
         self.saved_names = self.content_tab_names();
@@ -1072,6 +1092,7 @@ impl TabViewer for Viewer<'_> {
             Content::Diagram(_) => self.app.show_diagram(i, ui),
             Content::Text { .. } => self.app.show_text(i, ui),
             Content::DiskText { .. } => self.app.show_disk_text(i, ui),
+            Content::Terminal(ref mut t) => t.ui(ui),
             Content::Image { .. } => self.app.show_image(i, ui),
             Content::FileText { .. } => self.app.show_file_text(i, ui),
         }
@@ -1121,7 +1142,7 @@ impl TabViewer for Viewer<'_> {
         ui.painter().rect_filled(ui.max_rect().expand(6.0), 0.0, ui.ctx().global_style().visuals.panel_fill);
         ui.spacing_mut().item_spacing.y = 2.0;
         // Images are not made here; they are opened from a file (File > Open image).
-        for (label, kind) in [("Diagram", NewKind::Diagram), ("Text file", NewKind::Text)] {
+        for (label, kind) in [("Diagram", NewKind::Diagram), ("Text file", NewKind::Text), ("Terminal", NewKind::Terminal)] {
             if crate::app::rect_button(ui, label, false).clicked() {
                 self.pending.push(Pending::Add(kind, Some(path)));
                 // The dock's popup closes only on clicks outside it; choosing closes it too.

@@ -9,6 +9,7 @@ mod model;
 mod render;
 mod svg;
 mod tabs;
+mod terminal;
 mod validate;
 
 use eframe::egui;

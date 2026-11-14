@@ -279,6 +279,8 @@ pub struct App {
     pub palette_view: PaletteView,
     /// The folder open in the explorer.
     pub explorer: Option<crate::explorer::Explorer>,
+    /// The egui context, for terminals (their reader threads ask for repaints).
+    pub egui_ctx: egui::Context,
     /// A text file (in the active diagram) whose contents should be opened in a tab.
     pub open_file_request: Option<Id>,
     /// An object's name as it was when its name field got the focus (restored if left empty).
@@ -339,6 +341,7 @@ impl Default for App {
             last_side: SideView::Diagram,
             palette_view: PaletteView::Objects,
             explorer: None,
+            egui_ctx: egui::Context::default(),
             open_file_request: None,
             name_before_edit: String::new(),
             theme: crate::render::Theme::default(),
@@ -350,6 +353,7 @@ impl Default for App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.egui_ctx = ctx.clone();
         if self.applied_theme != Some(self.theme) {
             let egui_theme = if self.theme.is_dark() { egui::Theme::Dark } else { egui::Theme::Light };
             ctx.set_theme(egui_theme);
@@ -629,7 +633,10 @@ impl App {
             diagrams: Vec::new(),
             items: self.project_items(),
             active: self.active_id().unwrap_or(0),
-            layout: crate::model::layout_to_text(&self.dock),
+            // Without the terminals, which are not saved.
+            layout: crate::model::layout_to_text(&self.dock.filter_tabs(|id| {
+                !self.tabs.iter().any(|t| t.id == *id && matches!(t.content, crate::tabs::Content::Terminal(_)))
+            })),
             folder: self.explorer.as_ref().map(|e| e.root.display().to_string()),
         };
         let json = serde_json::to_string_pretty(&project).expect("project serializes");
@@ -919,6 +926,9 @@ impl App {
                 }
                 if ui.button("New text file").clicked() {
                     self.add_tab(NewKind::Text, None);
+                }
+                if ui.button("New terminal").clicked() {
+                    self.add_tab(NewKind::Terminal, None);
                 }
                 if ui.button("Open image...").clicked() {
                     self.open_image();
