@@ -1070,6 +1070,8 @@ pub enum ItemContent {
     Image(String),
     /// The contents of text file `node` in diagram item `diagram`, open for editing.
     FileText { diagram: u64, node: u64 },
+    /// A file on disk (opened from the explorer), by path; its text is read when the project opens.
+    DiskFile(String),
 }
 
 impl ItemContent {
@@ -1080,6 +1082,7 @@ impl ItemContent {
             ItemContent::Text(_) => "text",
             ItemContent::Image(_) => "image",
             ItemContent::FileText { .. } => "file",
+            ItemContent::DiskFile(_) => "disk file",
         }
     }
 }
@@ -1116,6 +1119,14 @@ pub struct ProjectFile {
     /// until first drawn, which JSON cannot store; RON can.)
     #[serde(default)]
     pub layout: Option<String>,
+    /// The folder open in the explorer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+}
+
+/// The folder a project file had open in the explorer, if any.
+pub fn project_folder(text: &str) -> Option<String> {
+    serde_json::from_str::<ProjectFile>(text).ok().and_then(|p| p.folder)
 }
 
 /// The layout as stored in a project file.
@@ -2417,6 +2428,7 @@ mod project_tests {
             items: items.clone(),
             active: 7,
             layout: layout_to_text(&Layout::new(vec![7, 9, 12])),
+            folder: None,
         };
         let json = serde_json::to_string(&file).unwrap();
         assert!(!json.contains("\"diagrams\""), "format 1 field is not written");

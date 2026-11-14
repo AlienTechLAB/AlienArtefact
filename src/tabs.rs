@@ -70,6 +70,8 @@ pub enum Content {
     /// The contents of a text file object (`node`) of diagram tab `diagram`. The text lives in the
     /// diagram, so its changes are the diagram's (undo, unsaved marker).
     FileText { diagram: ItemId, node: Id },
+    /// A text file on disk (opened from the explorer); saving writes it back.
+    DiskText { path: std::path::PathBuf, text: String, saved: String },
 }
 
 /// The kinds of tab that can be created.
@@ -530,7 +532,7 @@ impl App {
         let i = self.focused_item().and_then(|id| self.index_of(id))?;
         let (item, node) = match self.tabs[i].content {
             Content::FileText { diagram, node } => (diagram, Some(node)),
-            Content::Text { .. } => (self.tabs[i].id, None),
+            Content::Text { .. } | Content::DiskText { .. } => (self.tabs[i].id, None),
             _ => return None,
         };
         self.code_selection.clone().filter(|s| s.item == item && s.node == node)
@@ -552,7 +554,7 @@ impl App {
             Content::Text { text, .. } => ItemContent::Text(text.clone()),
             Content::Image { path, .. } => ItemContent::Image(path.clone()),
             // A second view of the same file adds nothing.
-            Content::FileText { .. } => return,
+            Content::FileText { .. } | Content::DiskText { .. } => return,
         };
         let new_id = self.alloc_item_id();
         self.next_item_id = new_id + 1;
@@ -566,7 +568,7 @@ impl App {
             }
             ItemContent::Text(t) => Content::Text { text: t, saved: String::new() },
             ItemContent::Image(p) => Content::Image { path: p, saved: String::new() },
-            ItemContent::FileText { .. } => return,
+            ItemContent::FileText { .. } | ItemContent::DiskFile(_) => return,
         };
         self.tabs.push(Tab { id: new_id, name, content });
         if let Some(path) = self.dock.find_tab(&id) {
@@ -594,6 +596,11 @@ impl App {
                     ItemContent::Text(t) => Content::Text { saved: t.clone(), text: t },
                     ItemContent::Image(p) => Content::Image { saved: p.clone(), path: p },
                     ItemContent::FileText { diagram, node } => Content::FileText { diagram, node },
+                    ItemContent::DiskFile(p) => {
+                        // Read again from disk; a file that is gone shows empty.
+                        let text = crate::explorer::read_text(std::path::Path::new(&p)).unwrap_or_default();
+                        Content::DiskText { path: p.into(), saved: text.clone(), text }
+                    }
                 },
             })
             .collect();
@@ -626,6 +633,7 @@ impl App {
                     Content::Text { text, .. } => ItemContent::Text(text.clone()),
                     Content::Image { path, .. } => ItemContent::Image(path.clone()),
                     Content::FileText { diagram, node } => ItemContent::FileText { diagram: *diagram, node: *node },
+                    Content::DiskText { path, .. } => ItemContent::DiskFile(path.display().to_string()),
                 },
             })
             .collect()
@@ -638,6 +646,7 @@ impl App {
             Content::Text { text, saved } => text != saved,
             Content::Image { path, saved } => path != saved,
             Content::FileText { .. } => false,
+            Content::DiskText { text, saved, .. } => text != saved,
         }
     }
 
@@ -646,7 +655,7 @@ impl App {
     fn content_tab_names(&self) -> Vec<String> {
         self.tabs
             .iter()
-            .filter(|t| !matches!(t.content, Content::FileText { .. }))
+            .filter(|t| !matches!(t.content, Content::FileText { .. } | Content::DiskText { .. }))
             .map(|t| t.name.clone())
             .collect()
     }
@@ -666,6 +675,8 @@ impl App {
                 Content::Text { text, saved } => *saved = text.clone(),
                 Content::Image { path, saved } => *saved = path.clone(),
                 Content::FileText { .. } => {}
+                // Written by `save_disk_files` before the project is saved.
+                Content::DiskText { text, saved, .. } => *saved = text.clone(),
             }
         }
         self.saved_names = self.content_tab_names();
@@ -799,7 +810,110 @@ impl App {
                 n.text = name.clone();
             }
         }
+        // A file on disk is renamed on disk.
+        if let Content::DiskText { path, .. } = &self.tabs[i].content {
+            let to = path.with_file_name(&name);
+            if to != *path {
+                if let Err(e) = std::fs::rename(path, &to) {
+                    self.status = format!("Could not rename {}: {e}", path.display());
+                    return;
+                }
+                if let Content::DiskText { path, .. } = &mut self.tabs[i].content {
+                    *path = to;
+                }
+                if let Some(ex) = &mut self.explorer {
+                    ex.refresh();
+                }
+            }
+        }
         self.tabs[i].name = name;
+    }
+
+    /// Adds a tab next to the focused one and shows it focused.
+    fn push_tab(&mut self, name: String, content: Content) -> ItemId {
+        let id = self.alloc_item_id();
+        self.next_item_id = id + 1;
+        self.tabs.push(Tab { id, name, content });
+        self.dock.push_to_focused_leaf(id);
+        if let Some(path) = self.dock.find_tab(&id) {
+            let _ = self.dock.set_active_tab(path);
+            self.dock.set_focused_node_and_surface(path.node_path());
+        }
+        id
+    }
+
+    /// Opens a file from the explorer: a picture in an image tab, text in the code editor. A
+    /// file already open is brought forward.
+    pub fn open_disk_file(&mut self, path: &std::path::Path) {
+        let open = self.tabs.iter().find(|t| match &t.content {
+            Content::DiskText { path: p, .. } => p == path,
+            Content::Image { path: p, .. } => std::path::Path::new(p) == path,
+            _ => false,
+        });
+        if let Some(id) = open.map(|t| t.id) {
+            if let Some(tp) = self.dock.find_tab(&id) {
+                let _ = self.dock.set_active_tab(tp);
+                self.dock.set_focused_node_and_surface(tp.node_path());
+            }
+            return;
+        }
+        if crate::explorer::is_image(path) {
+            self.open_image_path(path.to_path_buf());
+            // Opening a file is not a change to the project.
+            if let Some(Content::Image { path, saved }) = self.tabs.last_mut().map(|t| &mut t.content) {
+                *saved = path.clone();
+            }
+            return;
+        }
+        let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        match crate::explorer::read_text(path) {
+            Ok(text) => {
+                self.push_tab(name, Content::DiskText { path: path.to_path_buf(), saved: text.clone(), text });
+                self.status = format!("Opened {}", path.display());
+            }
+            Err(e) => self.status = format!("Cannot open {name}: {e}"),
+        }
+    }
+
+    /// Writes every changed file on disk. Returns how many were written.
+    pub fn save_disk_files(&mut self) -> usize {
+        let mut written = 0;
+        let mut errors = Vec::new();
+        for t in &mut self.tabs {
+            if let Content::DiskText { path, text, saved } = &mut t.content {
+                if text != saved {
+                    match std::fs::write(&*path, text.as_bytes()) {
+                        Ok(()) => {
+                            *saved = text.clone();
+                            written += 1;
+                        }
+                        Err(e) => errors.push(format!("{}: {e}", path.display())),
+                    }
+                }
+            }
+        }
+        if !errors.is_empty() {
+            self.status = format!("Could not save {}", errors.join("; "));
+        }
+        written
+    }
+
+    /// A file on disk in the code editor, under a strip with its name, format and path.
+    pub fn show_disk_text(&mut self, i: usize, ui: &mut Ui) {
+        let id = self.tabs[i].id;
+        let name = self.tabs[i].name.clone();
+        let format = crate::model::text_format(&name);
+        let Content::DiskText { path, text, .. } = &mut self.tabs[i].content else { return };
+        ui.horizontal(|ui| {
+            ui.strong(&name);
+            ui.weak(format.to_uppercase());
+            ui.weak(format!("\u{2014} {}", path.display()));
+        });
+        ui.separator();
+        if let Some((a, b)) = crate::code::code_editor(ui, ("disk", id), text, format) {
+            let sel = crate::code::selection_of(text, a, b, &name, id, None);
+            self.keep_selection(sel, ui);
+        }
     }
 
     /// Text file object `node` of diagram tab `diagram`, wherever that diagram's state is.
@@ -957,6 +1071,7 @@ impl TabViewer for Viewer<'_> {
         match self.app.tabs[i].content {
             Content::Diagram(_) => self.app.show_diagram(i, ui),
             Content::Text { .. } => self.app.show_text(i, ui),
+            Content::DiskText { .. } => self.app.show_disk_text(i, ui),
             Content::Image { .. } => self.app.show_image(i, ui),
             Content::FileText { .. } => self.app.show_file_text(i, ui),
         }
@@ -1166,7 +1281,7 @@ mod tests {
     fn the_app_starts_empty_and_the_palette_makes_a_diagram() {
         let mut app = App::default();
         app.start_empty();
-        assert!(app.tabs.is_empty() && app.active.is_none() && app.palette_view.is_none());
+        assert!(app.tabs.is_empty() && app.active.is_none() && app.side.is_none());
         assert_eq!(app.dock.iter_all_tabs().count(), 0);
         assert!(!app.project_dirty());
 
@@ -1221,6 +1336,42 @@ mod tests {
         app.answer_close(true, true);
         assert!(app.tabs.is_empty() && app.close_ask.is_none());
         assert_eq!(app.close_answer_all, None, "the answer is forgotten once the closing is done");
+    }
+
+    #[test]
+    fn files_from_the_explorer_open_once_and_save_to_disk() {
+        let dir = std::env::temp_dir().join(format!("alien_disk_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("notes.rs");
+        std::fs::write(&file, "fn a() {}").unwrap();
+
+        let mut app = App::default();
+        app.start_empty();
+        app.open_disk_file(&file);
+        app.open_disk_file(&file);
+        assert_eq!(app.tabs.len(), 1, "opened once");
+        assert_eq!(app.tabs[0].name, "notes.rs");
+        assert!(!app.project_dirty(), "opening a file is not a change");
+
+        let Content::DiskText { text, .. } = &mut app.tabs[0].content else { panic!() };
+        text.push_str("\nfn b() {}");
+        assert!(app.project_dirty());
+        assert_eq!(app.save_disk_files(), 1);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "fn a() {}\nfn b() {}");
+        assert!(!app.project_dirty());
+
+        // It is kept in the project by path and read again.
+        let items = app.project_items();
+        assert_eq!(items[0].content, ItemContent::DiskFile(file.display().to_string()));
+        app.reset_project(Project { items, active: None, layout: None }, None);
+        let Content::DiskText { text, .. } = &app.tabs[0].content else { panic!() };
+        assert_eq!(text, "fn a() {}\nfn b() {}");
+
+        // Renaming the tab renames the file.
+        app.rename_tab(0, "lib.rs".into());
+        assert!(dir.join("lib.rs").exists() && !file.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

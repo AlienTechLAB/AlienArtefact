@@ -107,6 +107,46 @@ fn theme_visuals(theme: crate::render::Theme) -> egui::Visuals {
     v
 }
 
+/// The explorer icon: two overlapping pages with a folded corner, as in VS Code.
+fn files_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| Pos2::new(c.x + x, c.y + y);
+    // The page behind: only its visible edges.
+    painter.add(egui::Shape::line(vec![p(-8.0, -6.0), p(-8.0, 12.0), p(4.0, 12.0)], stroke));
+    // The page in front, with a folded top-right corner.
+    painter.add(egui::Shape::closed_line(
+        vec![p(-4.0, -12.0), p(4.0, -12.0), p(9.0, -7.0), p(9.0, 8.0), p(-4.0, 8.0)],
+        stroke,
+    ));
+    painter.add(egui::Shape::line(vec![p(4.0, -12.0), p(4.0, -7.0), p(9.0, -7.0)], stroke));
+}
+
+/// One row of the explorer tree: indented by `depth`, a chevron for folders (`expanded` is
+/// `None` for files), the name; highlighted when `selected`. `strong` for the root row.
+fn tree_row(ui: &mut Ui, depth: usize, name: &str, expanded: Option<bool>, selected: bool, strong: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(120.0), 22.0), Sense::click());
+    let style = ui.ctx().global_style();
+    let v = &style.visuals;
+    if selected {
+        ui.painter().rect_filled(rect, 0.0, v.selection.bg_fill.gamma_multiply(0.6));
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, 0.0, v.widgets.hovered.weak_bg_fill);
+    }
+    let x = rect.left() + 6.0 + depth as f32 * 12.0;
+    let cy = rect.center().y;
+    let ink = if strong { v.strong_text_color() } else { v.text_color() };
+    if let Some(open) = expanded {
+        let pts = if open {
+            vec![Pos2::new(x, cy - 2.0), Pos2::new(x + 4.0, cy + 2.0), Pos2::new(x + 8.0, cy - 2.0)]
+        } else {
+            vec![Pos2::new(x + 2.0, cy - 4.0), Pos2::new(x + 6.0, cy), Pos2::new(x + 2.0, cy + 4.0)]
+        };
+        ui.painter().add(egui::Shape::line(pts, Stroke::new(1.3, ink)));
+    }
+    let font = if strong { egui::FontId::proportional(12.5) } else { egui::TextStyle::Body.resolve(ui.style()) };
+    ui.painter().text(Pos2::new(x + 14.0, cy), egui::Align2::LEFT_CENTER, name, font, ink);
+    resp
+}
+
 /// The diagrams icon: a small flowchart (a box, a decision diamond, two circles and the boxes
 /// below them), about 30 x 28 points around `c`.
 fn flowchart_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
@@ -130,7 +170,16 @@ fn flowchart_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     }
 }
 
-/// The categories of the palette, one icon each in the activity bar.
+/// What the side panel shows, one icon each in the activity bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SideView {
+    /// The open folder as a tree.
+    Explorer,
+    /// The diagram palette.
+    Diagram,
+}
+
+/// The categories of the diagram palette.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaletteView {
     Objects,
@@ -222,10 +271,14 @@ pub struct App {
     pub link_error: Option<LinkError>,
     /// New pointers point to a const object.
     pub pointer_const: bool,
-    /// The palette category shown in the side panel; `None` = panel hidden.
-    pub palette_view: Option<PaletteView>,
-    /// The category to show again when the panel is reopened with Ctrl+B.
-    pub last_palette_view: PaletteView,
+    /// What the side panel shows (explorer or diagram palette); `None` = panel hidden.
+    pub side: Option<SideView>,
+    /// The view to show again when the panel is reopened with Ctrl+B.
+    pub last_side: SideView,
+    /// The palette category shown in the diagram palette.
+    pub palette_view: PaletteView,
+    /// The folder open in the explorer.
+    pub explorer: Option<crate::explorer::Explorer>,
     /// A text file (in the active diagram) whose contents should be opened in a tab.
     pub open_file_request: Option<Id>,
     /// An object's name as it was when its name field got the focus (restored if left empty).
@@ -282,8 +335,10 @@ impl Default for App {
             link_tool: None,
             link_error: None,
             pointer_const: false,
-            palette_view: Some(PaletteView::Objects),
-            last_palette_view: PaletteView::Objects,
+            side: Some(SideView::Diagram),
+            last_side: SideView::Diagram,
+            palette_view: PaletteView::Objects,
+            explorer: None,
             open_file_request: None,
             name_before_edit: String::new(),
             theme: crate::render::Theme::default(),
@@ -314,8 +369,15 @@ impl eframe::App for App {
         // No inner margin, so the highlight bar of the shown category sits on the window's edge.
         let strip = egui::Frame::side_top_panel(ui.style()).inner_margin(0.0);
         egui::Panel::left("activity").resizable(false).exact_size(44.0).frame(strip).show(ui, |ui| self.activity_bar(ui));
-        if let Some(view) = self.palette_view {
-            egui::Panel::left("palette").resizable(true).default_size(130.0).show(ui, |ui| self.palette(ui, view));
+        match self.side {
+            Some(SideView::Explorer) => {
+                egui::Panel::left("explorer").resizable(true).default_size(220.0).show(ui, |ui| self.explorer_panel(ui));
+            }
+            Some(SideView::Diagram) => {
+                let view = self.palette_view;
+                egui::Panel::left("palette").resizable(true).default_size(130.0).show(ui, |ui| self.palette(ui, view));
+            }
+            None => {}
         }
         // The format panel is there only while something is selected: it edits the selection. It
         // is hidden while a tab that is not a diagram (a file's editor, an image) has focus.
@@ -483,7 +545,7 @@ impl App {
     /// The app as started without a project: nothing open, the palette hidden.
     pub fn start_empty(&mut self) {
         self.reset_project(Project { items: Vec::new(), active: None, layout: None }, None);
-        self.palette_view = None;
+        self.side = None;
     }
 
     fn new_file(&mut self) {
@@ -511,6 +573,9 @@ impl App {
             .and_then(|s| crate::model::load_project(&s, &fallback))
         {
             Ok(project) => {
+                // The folder the project had open in the explorer.
+                let folder = std::fs::read_to_string(&path).ok().and_then(|t| crate::model::project_folder(&t));
+                self.explorer = folder.map(|f| crate::explorer::Explorer::new(f.into()));
                 let count = project.items.len();
                 self.status = format!("Opened {} ({count} tab{})", path.display(), if count == 1 { "" } else { "s" });
                 self.reset_project(project, Some(path));
@@ -519,10 +584,30 @@ impl App {
         }
     }
 
+    /// Ctrl+S: changed files on disk are written, and the project saved. A project that was
+    /// never saved and holds only files from disk is not asked for.
     fn save(&mut self) {
+        let written = self.save_disk_files();
+        let has_project_content = self.tabs.iter().any(|t| {
+            !matches!(t.content, crate::tabs::Content::DiskText { .. } | crate::tabs::Content::Image { .. })
+        });
         match self.path.clone() {
             Some(p) => self.write_to(p),
-            None => self.save_as(),
+            None if has_project_content => self.save_as(),
+            None => {
+                self.mark_project_saved();
+                let s = if written == 1 { "" } else { "s" };
+                self.status = format!("Saved {written} file{s}");
+            }
+        }
+    }
+
+    /// Asks for a folder and shows it in the explorer.
+    fn open_folder(&mut self) {
+        if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+            self.status = format!("Opened folder {}", dir.display());
+            self.explorer = Some(crate::explorer::Explorer::new(dir));
+            self.side = Some(SideView::Explorer);
         }
     }
 
@@ -538,12 +623,14 @@ impl App {
 
     fn write_to(&mut self, path: PathBuf) {
         self.force_commit();
+        self.save_disk_files();
         let project = ProjectFile {
             alien_artefact_project: 2,
             diagrams: Vec::new(),
             items: self.project_items(),
             active: self.active_id().unwrap_or(0),
             layout: crate::model::layout_to_text(&self.dock),
+            folder: self.explorer.as_ref().map(|e| e.root.display().to_string()),
         };
         let json = serde_json::to_string_pretty(&project).expect("project serializes");
         match std::fs::write(&path, json) {
@@ -845,6 +932,12 @@ impl App {
                 if ui.add(egui::Button::new("Open...").shortcut_text("Ctrl+O")).clicked() {
                     self.open();
                 }
+                if ui.button("Open Folder...").clicked() {
+                    self.open_folder();
+                }
+                if ui.add_enabled(self.explorer.is_some(), egui::Button::new("Close Folder")).clicked() {
+                    self.explorer = None;
+                }
                 if ui.add(egui::Button::new("Save").shortcut_text("Ctrl+S")).clicked() {
                     self.save();
                 }
@@ -996,43 +1089,54 @@ impl App {
         });
     }
 
-    /// Shows or hides the palette panel (Ctrl+B, or a second click on the active icon).
+    /// Shows or hides the side panel (Ctrl+B, or a second click on the active icon).
     pub fn toggle_palette(&mut self) {
-        match self.palette_view.take() {
-            Some(view) => self.last_palette_view = view,
-            None => self.palette_view = Some(self.last_palette_view),
+        match self.side.take() {
+            Some(view) => self.last_side = view,
+            None => self.side = Some(self.last_side),
         }
     }
 
-    /// The icon strip (VS Code's activity bar). For now one icon: the diagram palette. Clicking
-    /// it shows or hides the palette panel.
+    /// The icon strip (VS Code's activity bar): the explorer and the diagram palette. Clicking an
+    /// icon shows its panel; clicking the shown one hides it.
     fn activity_bar(&mut self, ui: &mut Ui) {
         let accent = self.theme.palette().map_or(Color32::from_rgb(0, 120, 215), |p| p.line);
         ui.add_space(6.0);
-        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
-        let shown = self.palette_view.is_some();
-        let resp = resp.on_hover_text(if shown { "Diagram shapes (click to hide, Ctrl+B)" } else { "Diagram shapes (Ctrl+B)" });
-        let painter = ui.painter();
-        if resp.hovered() {
-            painter.rect_filled(rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill);
-        }
-        if shown {
-            painter.rect_filled(Rect::from_min_size(rect.min, vec2(2.0, rect.height())), 0.0, accent);
-        }
-        let col = if shown || resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
-        flowchart_icon(painter, rect.center(), Stroke::new(1.3, col));
-        if resp.clicked() {
-            self.toggle_palette();
+        for view in [SideView::Explorer, SideView::Diagram] {
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+            let shown = self.side == Some(view);
+            let title = match view {
+                SideView::Explorer => "Explorer",
+                SideView::Diagram => "Diagram shapes",
+            };
+            let resp = resp.on_hover_text(if shown { format!("{title} (click to hide, Ctrl+B)") } else { title.to_owned() });
+            let painter = ui.painter();
+            if resp.hovered() {
+                painter.rect_filled(rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill);
+            }
+            if shown {
+                painter.rect_filled(Rect::from_min_size(rect.min, vec2(2.0, rect.height())), 0.0, accent);
+            }
+            let col = if shown || resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
+            match view {
+                SideView::Explorer => files_icon(painter, rect.center(), Stroke::new(1.4, col)),
+                SideView::Diagram => flowchart_icon(painter, rect.center(), Stroke::new(1.3, col)),
+            }
+            if resp.clicked() {
+                if shown {
+                    self.toggle_palette();
+                } else {
+                    self.side = Some(view);
+                }
+            }
         }
     }
 
-    /// The diagram palette: a header with a hide button, a tab per category (Objects, Collections,
-    /// Pointers, Relations) and the shapes or lines of the chosen one. Clicking a shape adds it
-    /// to the active diagram (a new diagram if there is none).
-    fn palette(&mut self, ui: &mut Ui, view: PaletteView) {
+    /// A panel header: a title and a chevron that hides the panel.
+    fn panel_header(&mut self, ui: &mut Ui, title: &str) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.strong("DIAGRAM");
+            ui.strong(title);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // A left-pointing chevron, drawn (no icon font needed).
                 let (rect, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
@@ -1051,12 +1155,85 @@ impl App {
                 }
             });
         });
+    }
+
+    /// The explorer: the open folder as a tree (folders first, click to expand), or a button to
+    /// open one. Clicking a file opens it in a tab.
+    fn explorer_panel(&mut self, ui: &mut Ui) {
+        self.panel_header(ui, "EXPLORER");
+        ui.add_space(2.0);
+        let Some(ex) = self.explorer.as_mut() else {
+            ui.add_space(6.0);
+            ui.label("You have not opened a folder yet.");
+            ui.add_space(8.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            if rect_button(ui, "Open Folder", true).clicked() {
+                self.open_folder();
+            }
+            return;
+        };
+        let rows = ex.rows();
+        let root_name = ex.root_name().to_uppercase();
+        let root = ex.root.clone();
+        let root_open = ex.expanded.contains(&root);
+        // The file of the focused tab is highlighted.
+        let focused_path = self.focused_item().and_then(|id| self.index_of(id)).and_then(|i| match &self.tabs[i].content {
+            crate::tabs::Content::DiskText { path, .. } => Some(path.clone()),
+            crate::tabs::Content::Image { path, .. } => Some(PathBuf::from(path)),
+            _ => None,
+        });
+        let mut toggle: Option<PathBuf> = None;
+        let mut open: Option<PathBuf> = None;
+        let mut refresh = false;
+        ui.horizontal(|ui| {
+            if tree_row(ui, 0, &root_name, Some(root_open), false, true).clicked() {
+                toggle = Some(root.clone());
+            }
+        });
+        if ui.small_button("\u{21bb} Refresh").on_hover_text("Read the folder again").clicked() {
+            refresh = true;
+        }
+        if root_open {
+            egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (depth, e) in &rows {
+                    let expanded = e.is_dir.then(|| self.explorer.as_ref().is_some_and(|x| x.expanded.contains(&e.path)));
+                    let selected = focused_path.as_deref() == Some(e.path.as_path());
+                    let r = tree_row(ui, depth + 1, &e.name, expanded, selected, false).on_hover_text(e.path.display().to_string());
+                    if r.clicked() {
+                        if e.is_dir {
+                            toggle = Some(e.path.clone());
+                        } else {
+                            open = Some(e.path.clone());
+                        }
+                    }
+                }
+            });
+        }
+        if let Some(ex) = self.explorer.as_mut() {
+            if let Some(dir) = toggle {
+                ex.toggle(&dir);
+            }
+            if refresh {
+                ex.refresh();
+            }
+        }
+        if let Some(path) = open {
+            self.open_disk_file(&path);
+        }
+    }
+
+    /// The diagram palette: a header with a hide button, a tab per category (Objects, Collections,
+    /// Pointers, Relations) and the shapes or lines of the chosen one. Clicking a shape adds it
+    /// to the active diagram (a new diagram if there is none).
+    fn palette(&mut self, ui: &mut Ui, view: PaletteView) {
+        self.panel_header(ui, "DIAGRAM");
         ui.add_space(2.0);
         // The category tabs: plain rectangles, the full width of the panel.
         ui.spacing_mut().item_spacing.y = 2.0;
         for v in PaletteView::ALL {
             if rect_button(ui, v.title(), v == view).clicked() {
-                self.palette_view = Some(v);
+                self.palette_view = v;
             }
         }
         ui.separator();
