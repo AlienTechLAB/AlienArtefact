@@ -19,9 +19,9 @@ use crate::model::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Theme {
     /// Deep navy, cyan outlines and violet relations that glow.
-    #[default]
     Neon,
     /// Neutral dark grey, no glow.
+    #[default]
     Graphite,
     /// Deep purple, lilac outlines and pink relations that glow.
     Amethyst,

@@ -13,3 +13,11 @@ rfd = "0.18.0"
 ron = "0.12.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# The same syntect as egui_extras uses; used directly to colour code line by line (incrementally).
+syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
+
+# Debug builds only (fast to build, our code keeps full debug info), but the libraries are
+# optimised: unoptimised syntax highlighting and text layout are tens of times slower. They are
+# built once and cached, so this does not slow down rebuilding our own code.
+[profile.dev.package."*"]
+opt-level = 3

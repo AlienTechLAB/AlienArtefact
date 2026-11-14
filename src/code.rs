@@ -5,7 +5,9 @@ use std::sync::OnceLock;
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, TextBuffer, TextStyle, Ui};
-use egui_extras::syntax_highlighting::{highlight_with, CodeTheme, SyntectSettings};
+use egui_extras::syntax_highlighting::SyntectSettings;
+use syntect::highlighting::{FontStyle, HighlightIterator, HighlightState, Highlighter};
+use syntect::parsing::{ParseState, ScopeStack};
 
 /// Syntax definitions and themes, loaded once (the highlighter caches by their address).
 fn syntect() -> &'static SyntectSettings {
@@ -51,20 +53,111 @@ fn palette(dark: bool) -> Palette {
     }
 }
 
-/// The highlighted text of a file in `format`.
-pub fn highlight(ui: &Ui, code: &str, format: &str) -> LayoutJob {
+/// The highlighted text of a file in `format`. `editor` identifies the editor showing it: its
+/// colours are remembered line by line, so after an edit only the changed lines (and those whose
+/// colours it changes, e.g. after opening a comment) are coloured again, as in VS Code.
+pub fn highlight(ui: &Ui, editor: egui::Id, code: &str, format: &str) -> LayoutJob {
     let font = TextStyle::Monospace.resolve(ui.style());
+    let dark = ui.visuals().dark_mode;
+    let plain = |code: &str| LayoutJob::simple(code.to_owned(), font.clone(), palette(dark).text, f32::INFINITY);
     match format {
-        "toml" | "ini" => highlight_keys(code, font, &palette(ui.visuals().dark_mode)),
-        "txt" | "csv" | "log" => {
-            let p = palette(ui.visuals().dark_mode);
-            LayoutJob::simple(code.to_owned(), font, p.text, f32::INFINITY)
-        }
-        _ => {
-            let theme = CodeTheme::from_style(ui.style());
-            highlight_with(ui.ctx(), ui.style(), &theme, code, format, syntect())
-        }
+        "toml" | "ini" => highlight_keys(code, font, &palette(dark)),
+        "txt" | "csv" | "log" => plain(code),
+        _ => highlight_lines(editor, code, format, dark, font.clone()).unwrap_or_else(|| plain(code)),
     }
+}
+
+/// The colours of one line, and the colouring state before and after it.
+#[derive(Clone)]
+struct LineColours {
+    text: String,
+    start: (ParseState, HighlightState),
+    end: (ParseState, HighlightState),
+    /// Coloured pieces: byte range in the line, colour, italic.
+    pieces: Vec<(std::ops::Range<usize>, Color32, bool)>,
+}
+
+/// One editor's remembered colours (for one format and theme).
+#[derive(Default)]
+struct ColourCache {
+    key: (String, bool),
+    lines: Vec<LineColours>,
+}
+
+thread_local! {
+    static COLOUR_CACHES: std::cell::RefCell<std::collections::HashMap<egui::Id, ColourCache>> =
+        Default::default();
+}
+
+/// Colours `code` with syntect, reusing the remembered colours of unchanged lines: the lines
+/// before the first change, and the lines after the last change once the colouring state there is
+/// the same as before. `None` when syntect does not know `format`.
+fn highlight_lines(editor: egui::Id, code: &str, format: &str, dark: bool, font: FontId) -> Option<LayoutJob> {
+    let set = syntect();
+    let syntax = set.ps.find_syntax_by_extension(format).or_else(|| set.ps.find_syntax_by_name(format))?;
+    let theme = &set.ts.themes[if dark { "base16-mocha.dark" } else { "Solarized (light)" }];
+    let highlighter = Highlighter::new(theme);
+    let new: Vec<&str> = syntect::util::LinesWithEndings::from(code).collect();
+
+    COLOUR_CACHES.with_borrow_mut(|caches| {
+        let cache = caches.entry(editor).or_default();
+        let key = (format.to_owned(), dark);
+        if cache.key != key {
+            *cache = ColourCache { key, lines: Vec::new() };
+        }
+        let old = std::mem::take(&mut cache.lines);
+        // Unchanged lines at the start and (shifted by inserted or removed lines) at the end.
+        let prefix = old.iter().zip(&new).take_while(|(o, n)| o.text == **n).count();
+        let max_suffix = old.len().min(new.len()) - prefix;
+        let suffix = old.iter().rev().zip(new.iter().rev()).take(max_suffix).take_while(|(o, n)| o.text == **n).count();
+
+        // Lines are moved out of the old list when reused, not copied.
+        let mut old: Vec<Option<LineColours>> = old.into_iter().map(Some).collect();
+        let shift = old.len() as isize - new.len() as isize;
+        let mut lines: Vec<LineColours> = Vec::with_capacity(new.len());
+        lines.extend(old[..prefix].iter_mut().map(|o| o.take().expect("each old line is used once")));
+        let mut state = match lines.last() {
+            Some(l) => l.end.clone(),
+            None => (ParseState::new(syntax), HighlightState::new(&highlighter, ScopeStack::new())),
+        };
+        let mut i = prefix;
+        while i < new.len() {
+            if i >= new.len() - suffix {
+                let o = (i as isize + shift) as usize;
+                if old[o].as_ref().is_some_and(|o| o.start == state) {
+                    // Back in step with the old colouring: the rest is unchanged.
+                    for j in i..new.len() {
+                        lines.push(old[(j as isize + shift) as usize].take().expect("each old line is used once"));
+                    }
+                    break;
+                }
+            }
+            let line = new[i];
+            let start = state.clone();
+            let ops = state.0.parse_line(line, &set.ps).ok()?;
+            let mut pieces = Vec::new();
+            let mut at = 0;
+            for (style, piece) in HighlightIterator::new(&mut state.1, &ops, line, &highlighter) {
+                let fg = style.foreground;
+                let italic = style.font_style.contains(FontStyle::ITALIC);
+                pieces.push((at..at + piece.len(), Color32::from_rgb(fg.r, fg.g, fg.b), italic));
+                at += piece.len();
+            }
+            lines.push(LineColours { text: line.to_owned(), start, end: state.clone(), pieces });
+            i += 1;
+        }
+
+        let mut job = LayoutJob::default();
+        for l in &lines {
+            for (range, color, italics) in &l.pieces {
+                let format = TextFormat { font_id: font.clone(), color: *color, italics: *italics, ..Default::default() };
+                job.append(&l.text[range.clone()], 0.0, format);
+            }
+        }
+        job.wrap.max_width = f32::INFINITY;
+        cache.lines = lines;
+        Some(job)
+    })
 }
 
 /// TOML and INI: `[sections]`, `key = value` lines, strings, numbers, booleans, comments.
@@ -241,8 +334,9 @@ pub fn code_editor(
     let digits = lines.to_string().len().max(3);
     let font = TextStyle::Monospace.resolve(ui.style());
     let gutter_color = ui.visuals().weak_text_color();
+    let editor = egui::Id::unique(&id_salt);
     let mut layouter = |ui: &Ui, buf: &dyn TextBuffer, _wrap: f32| {
-        let job = highlight(ui, buf.as_str(), format);
+        let job = highlight(ui, editor, buf.as_str(), format);
         ui.fonts_mut(|f| f.layout_job(job))
     };
     egui::ScrollArea::both().id_salt(id_salt).auto_shrink(false).show(ui, |ui| {
@@ -323,10 +417,73 @@ mod tests {
     }
 
     #[test]
+    fn incremental_colours_match_colouring_from_scratch() {
+        let font = FontId::monospace(12.0);
+        let colours = |job: &LayoutJob| {
+            job.sections.iter().map(|s| (job.text[s.byte_range.start.0..s.byte_range.end.0].to_owned(), s.format.color)).collect::<Vec<_>>()
+        };
+        let base = "fn main() {\n    let x = 1; // one\n    let s = \"two\";\n}\n\nfn other() {}\n";
+        let edits = [
+            base.replace("let x", "let xy"),                 // typing in a line
+            base.replace("fn main() {\n", "fn main() {\n    let added = 3;\n"), // a new line
+            base.replace("\n\nfn other", "\n/*\nfn other"), // a comment that colours the lines after it
+            base.replace("    let s = \"two\";\n", ""),       // a removed line
+        ];
+        for edited in edits {
+            let id = egui::Id::unique(("inc", edited.len()));
+            highlight_lines(id, base, "rs", true, font.clone()).unwrap();
+            let incremental = highlight_lines(id, &edited, "rs", true, font.clone()).unwrap();
+            let fresh = highlight_lines(egui::Id::unique(("fresh", edited.len())), &edited, "rs", true, font.clone()).unwrap();
+            assert_eq!(incremental.text, edited);
+            assert_eq!(colours(&incremental), colours(&fresh), "for {edited:?}");
+        }
+    }
+
+    #[test]
     fn syntect_knows_the_other_code_formats() {
         let ps = &syntect().ps;
         for f in ["json", "c", "h", "cpp", "rs", "py", "html", "xml", "md", "yaml"] {
             assert!(ps.find_syntax_by_extension(f).is_some(), "no syntax for {f}");
         }
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    /// Run with `cargo test time_highlighting -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn time_highlighting() {
+        use std::time::Instant;
+        let code = std::fs::read_to_string("src/app.rs").unwrap();
+        let id = egui::Id::unique("timing");
+        let font = egui::FontId::monospace(13.0);
+        let font2 = font.clone();
+        let t = Instant::now();
+        let first = super::highlight_lines(id, &code, "rs", true, font.clone()).unwrap();
+        eprintln!("{} lines, first colouring: {:?}", code.lines().count(), t.elapsed());
+        // One character typed in the middle of the file.
+        let mid = code[..code.len() / 2].rfind('\n').unwrap() + 1;
+        let edited = format!("{}x{}", &code[..mid], &code[mid..]);
+        let t = Instant::now();
+        super::highlight_lines(id, &edited, "rs", true, font.clone()).unwrap();
+        eprintln!("after typing a character: {:?}", t.elapsed());
+        let opened = code.replacen("\n", "\n/*\n", 1);
+        let t = Instant::now();
+        super::highlight_lines(id, &opened, "rs", true, font).unwrap();
+        super::highlight_lines(id, &code, "rs", true, font2.clone()).unwrap();
+        eprintln!("after opening a comment near the top: {:?}", t.elapsed());
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let job = super::highlight_lines(id, &code, "rs", true, font2.clone()).unwrap();
+            let t = Instant::now();
+            let _ = ui.fonts_mut(|f| f.layout_job(job));
+            eprintln!("text layout, first: {:?}", t.elapsed());
+            let job = super::highlight_lines(id, &edited, "rs", true, font2.clone()).unwrap();
+            let t = Instant::now();
+            let _ = ui.fonts_mut(|f| f.layout_job(job));
+            eprintln!("text layout after a keystroke: {:?}", t.elapsed());
+        });
+        assert!(!first.sections.is_empty());
     }
 }

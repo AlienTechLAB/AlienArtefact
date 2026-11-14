@@ -283,7 +283,7 @@ pub struct App {
     pub open_file_request: Option<Id>,
     /// An object's name as it was when its name field got the focus (restored if left empty).
     pub name_before_edit: String,
-    /// The colour theme (Neon by default); chosen in the View menu and Preferences.
+    /// The colour theme (Graphite by default); chosen in the View menu and Preferences.
     pub theme: crate::render::Theme,
     /// The theme last applied to egui, so it is only changed when `theme` changes.
     applied_theme: Option<crate::render::Theme>,

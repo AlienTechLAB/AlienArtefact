@@ -170,6 +170,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+ "syntect",
 ]
 
 [[package]]
