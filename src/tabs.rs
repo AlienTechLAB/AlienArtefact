@@ -74,6 +74,15 @@ pub enum Content {
     DiskText { path: std::path::PathBuf, text: String, saved: String },
     /// The system shell. Not saved with the project (it is a running program).
     Terminal(Box<crate::terminal::Terminal>),
+    /// Source control for the explorer's folder. Not saved with the project (a tool, not content).
+    Git(Box<crate::git::GitTool>),
+}
+
+impl Content {
+    /// Running tools (terminals, git) rather than project content: not saved with the project.
+    pub fn is_tool(&self) -> bool {
+        matches!(self, Content::Terminal(_) | Content::Git(_))
+    }
 }
 
 /// The kinds of tab that can be created.
@@ -569,7 +578,7 @@ impl App {
             Content::Text { text, .. } => ItemContent::Text(text.clone()),
             Content::Image { path, .. } => ItemContent::Image(path.clone()),
             // A second view of the same file adds nothing.
-            Content::FileText { .. } | Content::DiskText { .. } | Content::Terminal(_) => return,
+            Content::FileText { .. } | Content::DiskText { .. } | Content::Terminal(_) | Content::Git(_) => return,
         };
         let new_id = self.alloc_item_id();
         self.next_item_id = new_id + 1;
@@ -639,8 +648,8 @@ impl App {
     pub fn project_items(&self) -> Vec<ProjectItem> {
         self.tabs
             .iter()
-            // Terminals are running programs, not saved.
-            .filter(|t| !matches!(t.content, Content::Terminal(_)))
+            // Terminals and the git tool are running programs, not saved.
+            .filter(|t| !t.content.is_tool())
             .map(|t| ProjectItem {
                 id: t.id,
                 name: t.name.clone(),
@@ -651,7 +660,7 @@ impl App {
                     Content::Image { path, .. } => ItemContent::Image(path.clone()),
                     Content::FileText { diagram, node } => ItemContent::FileText { diagram: *diagram, node: *node },
                     Content::DiskText { path, .. } => ItemContent::DiskFile(path.display().to_string()),
-                    Content::Terminal(_) => unreachable!("filtered out above"),
+                    Content::Terminal(_) | Content::Git(_) => unreachable!("filtered out above"),
                 },
             })
             .collect()
@@ -665,7 +674,7 @@ impl App {
             Content::Image { path, saved } => path != saved,
             Content::FileText { .. } => false,
             Content::DiskText { text, saved, .. } => text != saved,
-            Content::Terminal(_) => false,
+            Content::Terminal(_) | Content::Git(_) => false,
         }
     }
 
@@ -674,7 +683,7 @@ impl App {
     fn content_tab_names(&self) -> Vec<String> {
         self.tabs
             .iter()
-            .filter(|t| !matches!(t.content, Content::FileText { .. } | Content::DiskText { .. } | Content::Terminal(_)))
+            .filter(|t| !matches!(t.content, Content::FileText { .. } | Content::DiskText { .. }) && !t.content.is_tool())
             .map(|t| t.name.clone())
             .collect()
     }
@@ -696,7 +705,7 @@ impl App {
                 Content::FileText { .. } => {}
                 // Written by `save_disk_files` before the project is saved.
                 Content::DiskText { text, saved, .. } => *saved = text.clone(),
-                Content::Terminal(_) => {}
+                Content::Terminal(_) | Content::Git(_) => {}
             }
         }
         self.saved_names = self.content_tab_names();
@@ -860,6 +869,20 @@ impl App {
             self.dock.set_focused_node_and_surface(path.node_path());
         }
         id
+    }
+
+    /// Shows the Git tab (creating it, for the explorer's folder, the first time).
+    pub fn open_git(&mut self) {
+        if let Some(id) = self.tabs.iter().find(|t| matches!(t.content, Content::Git(_))).map(|t| t.id) {
+            if let Some(path) = self.dock.find_tab(&id) {
+                let _ = self.dock.set_active_tab(path);
+                self.dock.set_focused_node_and_surface(path.node_path());
+            }
+            return;
+        }
+        let Some(dir) = self.explorer.as_ref().map(|e| e.root.clone()) else { return };
+        let tool = crate::git::GitTool::new(dir, self.egui_ctx.clone());
+        self.push_tab("Git".into(), Content::Git(Box::new(tool)));
     }
 
     /// Opens a file from the explorer: a picture in an image tab, text in the code editor. A
@@ -1101,6 +1124,12 @@ impl TabViewer for Viewer<'_> {
             Content::Text { .. } => self.app.show_text(i, ui),
             Content::DiskText { .. } => self.app.show_disk_text(i, ui),
             Content::Terminal(ref mut t) => t.ui(ui),
+            Content::Git(ref mut g) => {
+                // Opened after the frame: the dock is out of the app while tabs are drawn.
+                if let Some(crate::git::Action::Open(path)) = g.ui(ui) {
+                    self.app.disk_open_request = Some(path);
+                }
+            }
             Content::Image { .. } => self.app.show_image(i, ui),
             Content::FileText { .. } => self.app.show_file_text(i, ui),
         }

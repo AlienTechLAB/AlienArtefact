@@ -312,6 +312,18 @@ fn word_at(line: &str, col: usize) -> String {
     chars[start..end].iter().collect()
 }
 
+/// The source control icon: a branch (two commits on a line, one on a branch joining it).
+fn git_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| Pos2::new(c.x + x, c.y + y);
+    painter.circle_stroke(p(-5.0, -9.0), 2.6, stroke);
+    painter.circle_stroke(p(-5.0, 9.0), 2.6, stroke);
+    painter.circle_stroke(p(6.0, -4.0), 2.6, stroke);
+    painter.line_segment([p(-5.0, -6.4), p(-5.0, 6.4)], stroke);
+    // The branch: down from the right commit, curving into the main line.
+    let curve = [p(6.0, -1.4), p(6.0, 3.0), p(-1.0, 3.0), p(-4.0, 6.0)];
+    painter.add(egui::Shape::line(curve.to_vec(), stroke));
+}
+
 /// The references icon: a list (three bullets and lines).
 fn references_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     for dy in [-7.0, 0.0, 7.0] {
@@ -526,6 +538,8 @@ pub struct App {
     pub name_before_edit: String,
     /// The colour theme (Graphite by default); chosen in the View menu and Preferences.
     pub theme: crate::render::Theme,
+    /// A file on disk to open in a tab after this frame (asked for by the Git tab).
+    pub disk_open_request: Option<PathBuf>,
     /// clangd, for code navigation in C/C++ files (started when first needed).
     pub lsp: Option<crate::lsp::Lsp>,
     /// A navigation asked for in an editor this frame: tab, what, at which character.
@@ -601,6 +615,7 @@ impl Default for App {
             name_before_edit: String::new(),
             theme: crate::render::Theme::default(),
             wheel_lines: 5,
+            disk_open_request: None,
             lsp: None,
             nav_request: None,
             nav_origin: None,
@@ -710,6 +725,9 @@ impl eframe::App for App {
             });
         }
         egui::CentralPanel::no_frame().show(ui, |ui| self.workspace(ui));
+        if let Some(path) = self.disk_open_request.take() {
+            self.open_disk_file(&path);
+        }
         self.start_nav();
         self.poll_nav();
         self.nav_popup_window(&ctx);
@@ -965,9 +983,9 @@ impl App {
             diagrams: Vec::new(),
             items: self.project_items(),
             active: self.active_id().unwrap_or(0),
-            // Without the terminals, which are not saved.
+            // Without the terminals and the git tool, which are not saved.
             layout: crate::model::layout_to_text(&self.dock.filter_tabs(|id| {
-                !self.tabs.iter().any(|t| t.id == *id && matches!(t.content, crate::tabs::Content::Terminal(_)))
+                !self.tabs.iter().any(|t| t.id == *id && t.content.is_tool())
             })),
             folder: self.explorer.as_ref().map(|e| e.root.display().to_string()),
         };
@@ -1503,6 +1521,24 @@ impl App {
                     self.side = Some(view);
                     self.search_focus = view == SideView::Search;
                 }
+            }
+        }
+        // Source control: opens the Git tab (while a folder is open).
+        if self.explorer.is_some() {
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+            let open = self.focused_item().and_then(|id| self.index_of(id)).is_some_and(|i| matches!(self.tabs[i].content, crate::tabs::Content::Git(_)));
+            let resp = resp.on_hover_text("Source Control (Git)");
+            let painter = ui.painter();
+            if resp.hovered() {
+                painter.rect_filled(rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill);
+            }
+            if open {
+                painter.rect_filled(Rect::from_min_size(rect.min, vec2(2.0, rect.height())), 0.0, accent);
+            }
+            let col = if open || resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
+            git_icon(painter, rect.center(), Stroke::new(1.6, col));
+            if resp.clicked() {
+                self.open_git();
             }
         }
     }
