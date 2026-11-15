@@ -10,7 +10,7 @@ use syntect::highlighting::{FontStyle, HighlightIterator, HighlightState, Highli
 use syntect::parsing::{ParseState, ScopeStack};
 
 /// Syntax definitions and themes, loaded once (the highlighter caches by their address).
-fn syntect() -> &'static SyntectSettings {
+pub(crate) fn syntect() -> &'static SyntectSettings {
     static SETTINGS: OnceLock<SyntectSettings> = OnceLock::new();
     SETTINGS.get_or_init(SyntectSettings::default)
 }
@@ -53,6 +53,11 @@ fn palette(dark: bool) -> Palette {
     }
 }
 
+/// The colour theme for the formats coloured with syntect or tree-sitter.
+fn theme(dark: bool) -> &'static syntect::highlighting::Theme {
+    &syntect().ts.themes[if dark { "base16-mocha.dark" } else { "Solarized (light)" }]
+}
+
 /// The highlighted text of a file in `format`. `editor` identifies the editor showing it: its
 /// colours are remembered line by line, so after an edit only the changed lines (and those whose
 /// colours it changes, e.g. after opening a comment) are coloured again, as in VS Code.
@@ -63,6 +68,11 @@ pub fn highlight(ui: &Ui, editor: egui::Id, code: &str, format: &str) -> LayoutJ
     match format {
         "toml" | "ini" => highlight_keys(code, font, &palette(dark)),
         "txt" | "csv" | "log" => plain(code),
+        // C and C++ with their real grammars (syntect's C grammar is lost after C++ literals).
+        _ if let Some(lang) = crate::c_family::lang_of(format) => {
+            let fg = theme(dark).settings.foreground.map_or(palette(dark).text, |c| Color32::from_rgb(c.r, c.g, c.b));
+            crate::c_family::highlight(editor, code, lang, dark, theme(dark), fg, font)
+        }
         _ => highlight_lines(editor, code, format, dark, font.clone()).unwrap_or_else(|| plain(code)),
     }
 }
@@ -95,7 +105,7 @@ thread_local! {
 fn highlight_lines(editor: egui::Id, code: &str, format: &str, dark: bool, font: FontId) -> Option<LayoutJob> {
     let set = syntect();
     let syntax = set.ps.find_syntax_by_extension(format).or_else(|| set.ps.find_syntax_by_name(format))?;
-    let theme = &set.ts.themes[if dark { "base16-mocha.dark" } else { "Solarized (light)" }];
+    let theme = theme(dark);
     let highlighter = Highlighter::new(theme);
     let new: Vec<&str> = syntect::util::LinesWithEndings::from(code).collect();
 
@@ -523,3 +533,4 @@ mod timing {
         assert!(!first.sections.is_empty());
     }
 }
+

@@ -16,6 +16,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # The same syntect as egui_extras uses; used directly to colour code line by line (incrementally).
 syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
+tree-sitter = "0.27"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
 vt100 = "0.18.1"
 
 # Debug builds only (fast to build, our code keeps full debug info), but the libraries are
