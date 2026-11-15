@@ -564,13 +564,190 @@ fn find_bar(ui: &mut Ui, find: &mut Find, editor_focused: bool, text: &str) -> b
     close
 }
 
+/// How a line differs from the saved file (see `line_changes`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineChange {
+    Same,
+    /// A new line (nothing was removed there).
+    Added,
+    /// A line that replaced saved lines.
+    Modified,
+}
+
+/// For each line of `text`, how it differs from `saved`. Where lines were removed and others
+/// inserted, an inserted line is modified when it is an edited version of a removed one (they
+/// share most of their text, or are paired in order otherwise); the other inserted lines are
+/// added.
+pub fn line_changes(saved: &str, text: &str) -> Vec<LineChange> {
+    use std::hash::{BuildHasher, BuildHasherDefault};
+    let hasher = BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default();
+    let (sa, sb): (Vec<&str>, Vec<&str>) = (saved.split('\n').collect(), text.split('\n').collect());
+    let hash = |lines: &[&str]| -> Vec<u64> { lines.iter().map(|l| hasher.hash_one(l)).collect() };
+    let (a, b) = (hash(&sa), hash(&sb));
+    let mut out = vec![LineChange::Same; b.len()];
+    if saved == text {
+        return out;
+    }
+    if saved.is_empty() {
+        // Everything in a file that was empty is new.
+        out.fill(LineChange::Added);
+        return out;
+    }
+    // The unchanged start and end are left out of the diff.
+    let pre = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let max_suf = a.len().min(b.len()) - pre;
+    let suf = a.iter().rev().zip(b.iter().rev()).take(max_suf).take_while(|(x, y)| x == y).count();
+    let (am, bm) = (&a[pre..a.len() - suf], &b[pre..b.len() - suf]);
+    let Some(pairs) = matching_lines(am, bm, 1000) else {
+        // Too different to compare: the whole changed part is modified.
+        let kind = if am.is_empty() { LineChange::Added } else { LineChange::Modified };
+        out[pre..b.len() - suf].fill(kind);
+        return out;
+    };
+    // Between two matching lines: lines removed from `saved`, lines inserted in `text`.
+    let (mut pi, mut pj) = (0, 0);
+    for (i, j) in pairs.into_iter().chain([(am.len(), bm.len())]) {
+        if j > pj {
+            let removed = &sa[pre + pi..pre + i];
+            let inserted = &sb[pre + pj..pre + j];
+            mark_hunk(removed, inserted, &mut out[pre + pj..pre + j]);
+        }
+        (pi, pj) = (i + 1, j + 1);
+    }
+    out
+}
+
+/// How alike two lines are, from 0 to 1: the share of the longer one (without indentation) that
+/// its start and end have in common with the other.
+fn similarity(a: &str, b: &str) -> f32 {
+    let (a, b): (Vec<char>, Vec<char>) = (a.trim().chars().collect(), b.trim().chars().collect());
+    let longest = a.len().max(b.len());
+    if longest == 0 {
+        return 1.0;
+    }
+    let pre = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let suf = a.iter().rev().zip(b.iter().rev()).take_while(|(x, y)| x == y).count();
+    (pre + suf).min(a.len().min(b.len())) as f32 / longest as f32
+}
+
+/// Marks the `inserted` lines that took the place of the `removed` ones: those pairing with an
+/// alike removed line (in order, as many alike pairs as possible) are modified, and between those
+/// pairs as many as were removed there (in order); the rest are added. Removed blank lines do
+/// not count: text typed into an empty line is added.
+fn mark_hunk(removed: &[&str], inserted: &[&str], out: &mut [LineChange]) {
+    const ALIKE: f32 = 0.5;
+    // Writing into a blank line adds to the file: removed blank lines replace nothing.
+    let removed: Vec<&str> = removed.iter().copied().filter(|l| !l.trim().is_empty()).collect();
+    let (d, n) = (removed.len(), inserted.len());
+    // Alike pairs, in order, the most similarity in total (when the block is small enough).
+    let mut pairs = Vec::new();
+    if d > 0 && d * n <= 250_000 {
+        let mut best = vec![vec![0f32; n + 1]; d + 1];
+        for x in 1..=d {
+            for y in 1..=n {
+                let s = similarity(removed[x - 1], inserted[y - 1]);
+                let pair = if s >= ALIKE { best[x - 1][y - 1] + s } else { f32::MIN };
+                best[x][y] = best[x - 1][y].max(best[x][y - 1]).max(pair);
+            }
+        }
+        let (mut x, mut y) = (d, n);
+        while x > 0 && y > 0 {
+            if best[x][y] == best[x - 1][y] {
+                x -= 1;
+            } else if best[x][y] == best[x][y - 1] {
+                y -= 1;
+            } else {
+                pairs.push((x - 1, y - 1));
+                x -= 1;
+                y -= 1;
+            }
+        }
+        pairs.reverse();
+    }
+    // Between the alike pairs: the first lines inserted there replace the lines removed there.
+    out.fill(LineChange::Added);
+    let (mut px, mut py) = (0, 0);
+    for (x, y) in pairs.into_iter().chain([(d, n)]) {
+        let replaced = (x - px).min(y - py);
+        out[py..py + replaced].fill(LineChange::Modified);
+        if y < n {
+            out[y] = LineChange::Modified;
+        }
+        (px, py) = (x + 1, y + 1);
+    }
+}
+
+/// The lines of `a` and `b` that match, as index pairs in order (a longest common subsequence,
+/// with Myers' algorithm). `None` when more than `max_d` lines differ.
+fn matching_lines(a: &[u64], b: &[u64], max_d: usize) -> Option<Vec<(usize, usize)>> {
+    let (n, m) = (a.len() as isize, b.len() as isize);
+    let off = n + m + 1;
+    let mut v = vec![0isize; (2 * off + 1) as usize];
+    // The furthest x of each diagonal k before step d: trace[d][k + d].
+    let mut trace: Vec<Vec<isize>> = Vec::new();
+    for d in 0..=(max_d as isize).min(n + m) {
+        trace.push(v[(off - d) as usize..=(off + d) as usize].to_vec());
+        for k in (-d..=d).step_by(2) {
+            let down = k == -d || (k != d && v[(off + k - 1) as usize] < v[(off + k + 1) as usize]);
+            let mut x = if down { v[(off + k + 1) as usize] } else { v[(off + k - 1) as usize] + 1 };
+            let mut y = x - k;
+            while x < n && y < m && a[x as usize] == b[y as usize] {
+                x += 1;
+                y += 1;
+            }
+            v[(off + k) as usize] = x;
+            if x >= n && y >= m {
+                return Some(backtrack(&trace, n, m));
+            }
+        }
+    }
+    None
+}
+
+fn backtrack(trace: &[Vec<isize>], n: isize, m: isize) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    let (mut x, mut y) = (n, m);
+    for d in (0..trace.len() as isize).rev() {
+        let (prev_x, prev_y) = if d == 0 {
+            (0, 0)
+        } else {
+            let v = &trace[d as usize];
+            let at = |k: isize| v[(k + d) as usize];
+            let k = x - y;
+            let prev_k = if k == -d || (k != d && at(k - 1) < at(k + 1)) { k + 1 } else { k - 1 };
+            let px = at(prev_k);
+            (px, px - prev_k)
+        };
+        while x > prev_x && y > prev_y {
+            x -= 1;
+            y -= 1;
+            pairs.push((x as usize, y as usize));
+        }
+        (x, y) = (prev_x, prev_y);
+    }
+    pairs.reverse();
+    pairs
+}
+
+/// The remembered `line_changes` of an editor, and what they were computed from.
+#[derive(Clone, Default)]
+struct Changes {
+    /// The saved text's address and length, and the text's length (a new save, or a change
+    /// made outside the editor, changes one of them).
+    key: Option<(usize, usize, usize)>,
+    lines: Vec<LineChange>,
+}
+
 /// A code editor filling the space: line numbers on the left, highlighted text on the right,
-/// and a find bar above them while it is open (`open_find`, Ctrl+F).
+/// and a find bar above them while it is open (`open_find`, Ctrl+F). With the `saved` text,
+/// a bar between the numbers and the text marks the lines added (green) and modified (yellow)
+/// since then.
 /// Returns the selection (character indices, start and end) while the editor has focus.
 pub fn code_editor(
     ui: &mut Ui,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
     text: &mut String,
+    saved: Option<&str>,
     format: &str,
 ) -> Option<(usize, usize)> {
     let mut selection = None;
@@ -635,6 +812,9 @@ pub fn code_editor(
                     .desired_width(ui.fonts_mut(|f| f.glyph_width(&font, '0')) * digits as f32 + 4.0)
                     .desired_rows(lines),
             );
+            // The bar marking changed lines (painted once the text is laid out).
+            let row = ui.fonts_mut(|f| f.row_height(&font));
+            let (bar, _) = ui.allocate_exact_size(egui::vec2(3.0, row * lines as f32), egui::Sense::hover());
             let out = egui::TextEdit::multiline(text)
                 .id(text_id)
                 .code_editor()
@@ -659,6 +839,31 @@ pub fn code_editor(
             if out.response.changed() {
                 find.edits += 1;
             }
+            if let Some(saved) = saved {
+                let changes_id = editor.with("changes");
+                let mut changes: Changes = ui.ctx().data_mut(|d| d.get_temp(changes_id)).unwrap_or_default();
+                let key = Some((saved.as_ptr() as usize, saved.len(), text.len()));
+                if out.response.changed() || changes.key != key {
+                    changes.lines = line_changes(saved, text);
+                    changes.key = key;
+                }
+                // Only the lines in view.
+                let clip = ui.clip_rect();
+                let top = out.galley_pos.y;
+                let first = (((clip.top() - top) / row).floor().max(0.0)) as usize;
+                let last = (((clip.bottom() - top) / row).ceil().max(0.0)) as usize;
+                for (i, change) in changes.lines.iter().enumerate().take(last + 1).skip(first) {
+                    let color = match change {
+                        LineChange::Same => continue,
+                        LineChange::Added => Color32::from_rgb(87, 171, 90),
+                        LineChange::Modified => Color32::from_rgb(214, 170, 60),
+                    };
+                    let y = top + i as f32 * row;
+                    let r = egui::Rect::from_min_max(egui::pos2(bar.left(), y), egui::pos2(bar.right(), y + row));
+                    ui.painter().rect_filled(r, 0.0, color);
+                }
+                ui.ctx().data_mut(|d| d.insert_temp(changes_id, changes));
+            }
             if out.response.has_focus() {
                 if let Some(r) = out.cursor_range {
                     let [a, b] = r.sorted_cursors();
@@ -677,6 +882,36 @@ pub fn code_editor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_lines() {
+        use LineChange::{Added as A, Modified as M, Same as S};
+        assert_eq!(line_changes("a\nb\nc", "a\nb\nc"), [S, S, S]);
+        assert_eq!(line_changes("a\nb\nc", "a\nx\nb\nc"), [S, A, S, S]);
+        assert_eq!(line_changes("a\nb\nc", "a\nB\nc"), [S, M, S]);
+        assert_eq!(line_changes("a\nb\nc", "a\nc"), [S, S], "a removed line marks nothing");
+        assert_eq!(line_changes("a\nb\nc", "a\nB\nnew\nc\nend"), [S, M, A, S, A]);
+        // Three lines added above a line that was edited.
+        let saved = "}\n\nres_t Client::fetchRequestHeader(Serial\n{";
+        let text = "}\n\n\n\n\nres_t Client::fetchRequestHeadjjer(Serial\n{";
+        assert_eq!(line_changes(saved, text), [S, S, A, A, A, M, S]);
+        // Text typed into an empty line is added; a line emptied is modified.
+        assert_eq!(line_changes("namespace {\n\nint f()", "namespace {\nd\nint f()"), [S, A, S]);
+        assert_eq!(line_changes("a\n  \nb\nc", "a\nx\ny\nb\nc"), [S, A, A, S, S]);
+        assert_eq!(line_changes("a\nint x;\nb", "a\n\nb"), [S, M, S]);
+        // Lines added below an edited one.
+        assert_eq!(line_changes("x\nint count = 1;\ny", "x\nint count = 2;\nnew\nnew2\ny"), [S, M, A, A, S]);
+        // Two edits far apart in a longer file.
+        let saved: Vec<String> = (0..200).map(|i| format!("line {i}")).collect();
+        let mut text = saved.clone();
+        text[10] = "changed".into();
+        text.insert(150, "inserted".into());
+        let ch = line_changes(&saved.join("\n"), &text.join("\n"));
+        let marked: Vec<_> = ch.iter().enumerate().filter(|(_, c)| **c != S).map(|(i, c)| (i, *c)).collect();
+        assert_eq!(marked, [(10, M), (150, A)]);
+        assert_eq!(line_changes("", "x\ny"), [A, A], "all new in a file that was empty");
+        assert_eq!(line_changes("a\nb", "A\nB\nC"), [M, M, A], "rewritten lines pair in order");
+    }
 
     #[test]
     fn find_all_and_mark_ranges() {

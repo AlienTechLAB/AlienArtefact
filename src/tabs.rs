@@ -657,7 +657,7 @@ impl App {
             .collect()
     }
 
-    fn tab_dirty(&self, t: &Tab) -> bool {
+    pub fn tab_dirty(&self, t: &Tab) -> bool {
         match &t.content {
             Content::Diagram(Some(s)) => s.diagram != s.saved,
             Content::Diagram(None) => self.diagram != self.saved,
@@ -923,7 +923,7 @@ impl App {
         let id = self.tabs[i].id;
         let name = self.tabs[i].name.clone();
         let format = crate::model::text_format(&name);
-        let Content::DiskText { path, text, .. } = &mut self.tabs[i].content else { return };
+        let Content::DiskText { path, text, saved } = &mut self.tabs[i].content else { return };
         ui.horizontal(|ui| {
             ui.strong(&name);
             ui.weak(format.to_uppercase());
@@ -931,7 +931,7 @@ impl App {
             line_count_label(ui, text);
         });
         ui.separator();
-        if let Some((a, b)) = crate::code::code_editor(ui, ("disk", id), text, format) {
+        if let Some((a, b)) = crate::code::code_editor(ui, ("disk", id), text, Some(saved), format) {
             let sel = crate::code::selection_of(text, a, b, &name, id, None);
             self.keep_selection(sel, ui);
         }
@@ -999,7 +999,7 @@ impl App {
         });
         ui.separator();
         let format = crate::model::text_format(&n.text);
-        if let Some((a, b)) = crate::code::code_editor(ui, ("file", id), &mut n.content, format) {
+        if let Some((a, b)) = crate::code::code_editor(ui, ("file", id), &mut n.content, None, format) {
             let sel = crate::code::selection_of(&n.content, a, b, &n.text, diagram, Some(node));
             self.keep_selection(sel, ui);
         }
@@ -1019,7 +1019,7 @@ impl App {
         // A text file of the project: the same editor as a file object's, named by its tab.
         let name = self.tabs[i].name.clone();
         let format = crate::model::text_format(&name);
-        let Content::Text { text, .. } = &mut self.tabs[i].content else { return };
+        let Content::Text { text, saved } = &mut self.tabs[i].content else { return };
         ui.horizontal(|ui| {
             ui.strong(&name);
             ui.weak(format.to_uppercase());
@@ -1027,7 +1027,7 @@ impl App {
             line_count_label(ui, text);
         });
         ui.separator();
-        if let Some((a, b)) = crate::code::code_editor(ui, ("text", id), text, format) {
+        if let Some((a, b)) = crate::code::code_editor(ui, ("text", id), text, Some(saved), format) {
             let sel = crate::code::selection_of(text, a, b, &name, id, None);
             self.keep_selection(sel, ui);
         }

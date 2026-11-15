@@ -802,14 +802,20 @@ impl App {
 
     /// Ctrl+S: changed files on disk are written, and the project saved. A project that was
     /// never saved and holds only files from disk is not asked for.
+    /// Ctrl+S: writes the changed files on disk, then the project. A project without a file is
+    /// only asked a file name for when it has unsaved work of its own (a diagram, a project text
+    /// file or a picture), not for files on disk or terminals.
     fn save(&mut self) {
         let written = self.save_disk_files();
-        let has_project_content = self.tabs.iter().any(|t| {
-            !matches!(t.content, crate::tabs::Content::DiskText { .. } | crate::tabs::Content::Image { .. })
+        let unsaved_project_work = self.tabs.iter().any(|t| {
+            matches!(
+                t.content,
+                crate::tabs::Content::Diagram(_) | crate::tabs::Content::Text { .. } | crate::tabs::Content::Image { .. }
+            ) && self.tab_dirty(t)
         });
         match self.path.clone() {
             Some(p) => self.write_to(p),
-            None if has_project_content => self.save_as(),
+            None if unsaved_project_work => self.save_as(),
             None => {
                 self.mark_project_saved();
                 let s = if written == 1 { "" } else { "s" };
@@ -1050,6 +1056,15 @@ impl App {
             self.side = Some(SideView::Search);
             self.search_focus = true;
         }
+        // Save: works also while typing in a text file.
+        if self.link_error.is_none() {
+            if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)) {
+                self.save_as();
+            }
+            if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::S)) {
+                self.save();
+            }
+        }
         // Find in the focused text file: works also while typing in it.
         if self.link_error.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::F)) {
             let tab = self.focused_item().and_then(|id| self.index_of(id)).map(|i| &self.tabs[i]);
@@ -1072,12 +1087,6 @@ impl App {
         }
         if key(cmd, Key::Z) {
             self.undo();
-        }
-        if key(cmd_shift, Key::S) {
-            self.save_as();
-        }
-        if key(cmd, Key::S) {
-            self.save();
         }
         if key(cmd, Key::O) {
             self.open();
