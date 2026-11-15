@@ -448,6 +448,15 @@ impl eframe::App for App {
         // VS Code-style: a strip of category icons, and the palette of the chosen category beside it.
         // No inner margin, so the highlight bar of the shown category sits on the window's edge.
         let strip = egui::Frame::side_top_panel(ui.style()).inner_margin(0.0);
+        // Search needs an open folder: when it is closed, the explorer shows instead.
+        if self.explorer.is_none() {
+            if self.side == Some(SideView::Search) {
+                self.side = Some(SideView::Explorer);
+            }
+            if self.last_side == SideView::Search {
+                self.last_side = SideView::Explorer;
+            }
+        }
         egui::Panel::left("activity").resizable(false).exact_size(44.0).frame(strip).show(ui, |ui| self.activity_bar(ui));
         match self.side {
             Some(SideView::Explorer) => {
@@ -910,8 +919,10 @@ impl App {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        // Search for files: works also while typing in an editor.
-        if self.link_error.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)) {
+        // Search for files (with a folder open): works also while typing in an editor.
+        if self.link_error.is_none()
+            && self.explorer.is_some()
+            && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)) {
             self.side = Some(SideView::Search);
             self.search_focus = true;
         }
@@ -1196,7 +1207,11 @@ impl App {
     fn activity_bar(&mut self, ui: &mut Ui) {
         let accent = self.theme.palette().map_or(Color32::from_rgb(0, 120, 215), |p| p.line);
         ui.add_space(6.0);
+        // Search is there only while a folder is open.
         for view in [SideView::Explorer, SideView::Search, SideView::Diagram] {
+            if view == SideView::Search && self.explorer.is_none() {
+                continue;
+            }
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
             let shown = self.side == Some(view);
             let title = match view {
@@ -1229,11 +1244,23 @@ impl App {
         }
     }
 
-    /// A panel header: a title and a chevron that hides the panel.
-    fn panel_header(&mut self, ui: &mut Ui, title: &str) {
+    /// A panel header: a title, optionally a refresh button right after it (`refresh` is its
+    /// tooltip), and a chevron that hides the panel. Returns whether refresh was clicked.
+    fn panel_header(&mut self, ui: &mut Ui, title: &str, refresh: Option<&str>) -> bool {
+        let mut refresh_clicked = false;
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.strong(title);
+            if let Some(tip) = refresh {
+                let (rect, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                let resp = resp.on_hover_text(tip);
+                if resp.hovered() {
+                    ui.painter().rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+                }
+                let col = if resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().text_color() };
+                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "\u{21bb}", egui::FontId::proportional(15.0), col);
+                refresh_clicked = resp.clicked();
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // A left-pointing chevron, drawn (no icon font needed).
                 let (rect, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
@@ -1252,12 +1279,13 @@ impl App {
                 }
             });
         });
+        refresh_clicked
     }
 
     /// The explorer: the open folder as a tree (folders first, click to expand), or a button to
     /// open one. Clicking a file opens it in a tab.
     fn explorer_panel(&mut self, ui: &mut Ui) {
-        self.panel_header(ui, "EXPLORER");
+        let refresh = self.panel_header(ui, "EXPLORER", self.explorer.is_some().then_some("Refresh: read the folder again"));
         ui.add_space(2.0);
         let Some(ex) = self.explorer.as_mut() else {
             ui.add_space(6.0);
@@ -1277,15 +1305,11 @@ impl App {
         let focused_path = self.focused_disk_path();
         let mut toggle: Option<PathBuf> = None;
         let mut open: Option<PathBuf> = None;
-        let mut refresh = false;
         ui.horizontal(|ui| {
             if tree_row(ui, 0, &root_name, Some(root_open), false, true).clicked() {
                 toggle = Some(root.clone());
             }
         });
-        if ui.small_button("\u{21bb} Refresh").on_hover_text("Read the folder again").clicked() {
-            refresh = true;
-        }
         if root_open {
             egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -1326,24 +1350,14 @@ impl App {
         })
     }
 
-    /// The search panel: finds files by name in the explorer's folder. A field with the Match
+    /// The search panel (only while a folder is open): finds files by name in the explorer's folder. A field with the Match
     /// Case and Whole Words toggles inside it (as in VS Code), and the files found; clicking one
     /// opens it. Pattern rules are in `search.rs`.
     fn search_panel(&mut self, ui: &mut Ui) {
-        self.panel_header(ui, "SEARCH");
+        self.panel_header(ui, "SEARCH", None);
         ui.add_space(2.0);
-        let Some(root) = self.explorer.as_ref().map(|e| e.root.clone()) else {
-            ui.add_space(6.0);
-            ui.label("Open a folder to search its files.");
-            ui.add_space(8.0);
-            ui.spacing_mut().item_spacing.y = 2.0;
-            if rect_button(ui, "Open Folder", true).clicked() {
-                self.open_folder();
-                self.side = Some(SideView::Search);
-                self.search_focus = true;
-            }
-            return;
-        };
+        // Not shown without a folder (see `ui`).
+        let Some(root) = self.explorer.as_ref().map(|e| e.root.clone()) else { return };
 
         // Alt+C / Alt+W toggle the options while typing (as in VS Code). Handled before the field
         // is drawn, so the letter is not typed into it.
@@ -1365,7 +1379,7 @@ impl App {
         const TOGGLE: f32 = 22.0;
         let field = egui::TextEdit::singleline(&mut self.search.query)
             .id(field_id)
-            .hint_text("Search files, e.g. abc*xyz.cpp")
+            .hint_text("Search files, e.g. abc*xyz.cpp, *.h")
             .desired_width(ui.available_width())
             .margin(egui::Margin { left: 6, right: (TOGGLE * 2.0 + 8.0) as i8, top: 5, bottom: 5 });
         let resp = ui.add(field);
@@ -1391,7 +1405,7 @@ impl App {
         let plural = if n == 1 { "" } else { "s" };
         ui.horizontal(|ui| {
             if self.search.query.trim().is_empty() {
-                ui.weak("Type a file name, or a pattern: * is any text, ? one character, / matches the path.");
+                // Nothing searched for yet: no status line.
             } else if self.search.running() {
                 ui.spinner();
                 ui.weak(format!("Searching... {n} file{plural}"));
@@ -1432,7 +1446,7 @@ impl App {
     /// Pointers, Relations) and the shapes or lines of the chosen one. Clicking a shape adds it
     /// to the active diagram (a new diagram if there is none).
     fn palette(&mut self, ui: &mut Ui, view: PaletteView) {
-        self.panel_header(ui, "DIAGRAM");
+        self.panel_header(ui, "DIAGRAM", None);
         ui.add_space(2.0);
         // The category tabs: plain rectangles, the full width of the panel.
         ui.spacing_mut().item_spacing.y = 2.0;

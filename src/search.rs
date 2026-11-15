@@ -6,7 +6,9 @@
 //! - with wildcards, the pattern must match the whole name: `*` is any run of characters (also
 //!   none), `?` is exactly one. `abc*xyz.cpp` finds `abc_1_xyz.cpp` but not `abc_xyz.cpp.bak`;
 //! - a pattern with `/` (or `\`) is matched against the path inside the folder instead of the
-//!   name: `src/*.rs`.
+//!   name: `src/*.rs`;
+//! - several patterns separated by commas (or semicolons) find files matching any of them:
+//!   `*.cpp, *.h, *.py`.
 //!
 //! Options: case sensitivity (off by default), and whole words, where a match may not start or
 //! end inside a word (letters, digits and `_`). In a wildcard pattern, the text on each side of a
@@ -37,9 +39,15 @@ enum Tok {
     Edge,
 }
 
-/// A compiled search pattern.
+/// A compiled search: one or more patterns, a file matches if it matches any.
 #[derive(Clone, Debug)]
 pub struct Matcher {
+    patterns: Vec<Pattern>,
+}
+
+/// One pattern of a search.
+#[derive(Clone, Debug)]
+struct Pattern {
     toks: Vec<Tok>,
     case_sensitive: bool,
     /// Matched against the path inside the folder instead of the name.
@@ -55,8 +63,22 @@ fn fold(c: char, case_sensitive: bool) -> char {
 }
 
 impl Matcher {
-    /// `None` for an empty pattern (nothing to search for).
-    pub fn new(pattern: &str, opts: SearchOptions) -> Option<Matcher> {
+    /// The patterns in `query`, separated by `,` or `;` (spaces around them are ignored). `None`
+    /// when there is none (nothing to search for).
+    pub fn new(query: &str, opts: SearchOptions) -> Option<Matcher> {
+        let patterns: Vec<Pattern> = query.split([',', ';']).filter_map(|p| Pattern::new(p, opts)).collect();
+        (!patterns.is_empty()).then_some(Matcher { patterns })
+    }
+
+    /// Whether the file matches any of the patterns: `name` is its name, `rel_path` its path
+    /// inside the folder with `/` between the parts.
+    pub fn is_match(&self, name: &str, rel_path: &str) -> bool {
+        self.patterns.iter().any(|p| p.is_match(name, rel_path))
+    }
+}
+
+impl Pattern {
+    fn new(pattern: &str, opts: SearchOptions) -> Option<Pattern> {
         let pattern = pattern.trim().replace('\\', "/");
         if pattern.is_empty() {
             return None;
@@ -93,12 +115,10 @@ impl Matcher {
         if !wild {
             toks.push(Tok::Any);
         }
-        Some(Matcher { toks, case_sensitive: opts.case_sensitive, on_path })
+        Some(Pattern { toks, case_sensitive: opts.case_sensitive, on_path })
     }
 
-    /// Whether the file matches: `name` is its name, `rel_path` its path inside the folder with
-    /// `/` between the parts.
-    pub fn is_match(&self, name: &str, rel_path: &str) -> bool {
+    fn is_match(&self, name: &str, rel_path: &str) -> bool {
         let subject = if self.on_path { rel_path } else { name };
         let text: Vec<char> = subject.chars().map(|c| fold(c, self.case_sensitive)).collect();
         let (n, m) = (self.toks.len(), text.len());
@@ -311,6 +331,16 @@ mod tests {
         assert_eq!(hits("abc*.cpp", false, false, &names), names);
         let names = ["abc-1-xyz.cpp", "abc_1_xyz.cpp", "abcxyz.cpp"];
         assert_eq!(hits("abc*xyz.cpp", false, true, &names), ["abc-1-xyz.cpp"]);
+    }
+
+    #[test]
+    fn several_patterns_separated_by_commas() {
+        let names = ["a.cpp", "b.h", "c.py", "d.rs", "e.cpp.bak"];
+        assert_eq!(hits("*.cpp,*.h,*.py", false, false, &names), ["a.cpp", "b.h", "c.py"]);
+        assert_eq!(hits(" *.cpp ; *.H ,", false, false, &names), ["a.cpp", "b.h"]);
+        // Each one follows its own rules: plain text anywhere, wildcards the whole name.
+        assert_eq!(hits("*.rs, bak", false, false, &names), ["d.rs", "e.cpp.bak"]);
+        assert!(Matcher::new(" , ;", SearchOptions::default()).is_none());
     }
 
     #[test]
