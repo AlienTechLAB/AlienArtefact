@@ -928,6 +928,7 @@ impl App {
             ui.strong(&name);
             ui.weak(format.to_uppercase());
             ui.weak(format!("\u{2014} {}", path.display()));
+            line_count_label(ui, text);
         });
         ui.separator();
         if let Some((a, b)) = crate::code::code_editor(ui, ("disk", id), text, format) {
@@ -994,6 +995,7 @@ impl App {
             ui.strong(&n.text);
             ui.weak(n.file_tag().unwrap_or_default());
             ui.weak("\u{2014} saved with the diagram");
+            line_count_label(ui, &n.content);
         });
         ui.separator();
         let format = crate::model::text_format(&n.text);
@@ -1022,6 +1024,7 @@ impl App {
             ui.strong(&name);
             ui.weak(format.to_uppercase());
             ui.weak("\u{2014} saved in the project");
+            line_count_label(ui, text);
         });
         ui.separator();
         if let Some((a, b)) = crate::code::code_editor(ui, ("text", id), text, format) {
@@ -1155,6 +1158,16 @@ impl TabViewer for Viewer<'_> {
         // Diagrams pan themselves; text and images scroll inside their own areas.
         [false, false]
     }
+}
+
+/// The number of lines of `text`, at the right end of a text editor's strip. Counted as the
+/// editor numbers them (a newline at the end starts one more, empty line).
+fn line_count_label(ui: &mut Ui, text: &str) {
+    let n = text.split('\n').count();
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.add_space(6.0);
+        ui.weak(if n == 1 { "1 line".to_owned() } else { format!("{n} lines") });
+    });
 }
 
 #[cfg(test)]
