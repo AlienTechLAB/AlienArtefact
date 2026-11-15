@@ -321,6 +321,19 @@ pub fn selection_of(text: &str, a: usize, b: usize, file: &str, item: u64, node:
     }
 }
 
+/// Asks the code editor `id_salt` (as given to `code_editor`) to select characters `from..to`
+/// of line `line` (from 1), scroll to them and take the focus, the next time it is drawn.
+pub fn request_goto(ctx: &egui::Context, id_salt: impl std::hash::Hash + std::fmt::Debug, line: usize, from: usize, to: usize) {
+    let key = egui::Id::unique(&id_salt).with("goto");
+    ctx.data_mut(|d| d.insert_temp(key, (line, from, to)));
+}
+
+/// The character index in `text` of column `col` (characters) of line `line` (from 1).
+fn char_index(text: &str, line: usize, col: usize) -> usize {
+    let before: usize = text.split('\n').take(line.saturating_sub(1)).map(|l| l.chars().count() + 1).sum();
+    (before + col).min(text.chars().count())
+}
+
 /// A code editor filling the space: line numbers on the left, highlighted text on the right.
 /// Returns the selection (character indices, start and end) while the editor has focus.
 pub fn code_editor(
@@ -335,6 +348,7 @@ pub fn code_editor(
     let font = TextStyle::Monospace.resolve(ui.style());
     let gutter_color = ui.visuals().weak_text_color();
     let editor = egui::Id::unique(&id_salt);
+    let goto: Option<(usize, usize, usize)> = ui.ctx().data_mut(|d| d.remove_temp(editor.with("goto")));
     let mut layouter = |ui: &Ui, buf: &dyn TextBuffer, _wrap: f32| {
         let job = highlight(ui, editor, buf.as_str(), format);
         ui.fonts_mut(|f| f.layout_job(job))
@@ -360,6 +374,19 @@ pub fn code_editor(
                 .desired_rows(lines)
                 .layouter(&mut layouter)
                 .show(ui);
+            if let Some((line, from, to)) = goto {
+                let (a, b) = (char_index(text, line, from), char_index(text, line, to));
+                let mut state = out.state.clone();
+                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(a),
+                    egui::text::CCursor::new(b),
+                )));
+                state.store(ui.ctx(), out.response.id);
+                out.response.request_focus();
+                let at = out.galley.pos_from_cursor(egui::text::CCursor::new(a)).translate(out.galley_pos.to_vec2());
+                ui.scroll_to_rect(at.expand(40.0), Some(egui::Align::Center));
+                ui.ctx().request_repaint();
+            }
             if out.response.has_focus() {
                 if let Some(r) = out.cursor_range {
                     let [a, b] = r.sorted_cursors();
@@ -374,6 +401,15 @@ pub fn code_editor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn char_index_of_line_and_column() {
+        let t = "ab\nc\u{e9}d\n\nx";
+        assert_eq!(char_index(t, 1, 1), 1);
+        assert_eq!(char_index(t, 2, 2), 5);
+        assert_eq!(char_index(t, 4, 0), 8);
+        assert_eq!(char_index(t, 9, 9), 9, "past the end: the end");
+    }
 
     fn colours(code: &str) -> Vec<(String, Color32)> {
         let job = highlight_keys(code, FontId::monospace(12.0), &palette(true));

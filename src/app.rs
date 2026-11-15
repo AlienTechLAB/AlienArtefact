@@ -168,8 +168,82 @@ fn option_toggle(ui: &mut Ui, rect: Rect, id: &str, on: bool, tip: &str, icon: O
     resp
 }
 
-/// One file in the search results: its name, then (dimmer) the folder it is in.
-fn result_row(ui: &mut Ui, name: &str, dir: &str, selected: bool) -> egui::Response {
+/// A search field with Match Case and Whole Word toggles inside its right end. Alt+C / Alt+W
+/// toggle them while typing in it (as in VS Code). `name` makes its ids unique.
+fn search_field(ui: &mut Ui, name: &str, value: &mut String, opts: &mut crate::search::SearchOptions, hint: &str) -> egui::Response {
+    // Handled before the field is drawn, so the letter is not typed into it.
+    let field_id = ui.make_persistent_id(name);
+    if ui.memory(|m| m.has_focus(field_id)) {
+        let (case, word) = ui.input_mut(|i| {
+            let c = i.consume_key(Modifiers::ALT, Key::C);
+            let w = i.consume_key(Modifiers::ALT, Key::W);
+            if c || w {
+                i.events.retain(|e| !matches!(e, Event::Text(_)));
+            }
+            (c, w)
+        });
+        opts.case_sensitive ^= case;
+        opts.whole_word ^= word;
+    }
+    // Room on the right of the field for the two toggles.
+    const TOGGLE: f32 = 22.0;
+    let field = egui::TextEdit::singleline(value)
+        .id(field_id)
+        .hint_text(hint)
+        .desired_width(ui.available_width())
+        .margin(egui::Margin { left: 6, right: (TOGGLE * 2.0 + 8.0) as i8, top: 5, bottom: 5 });
+    let resp = ui.add(field);
+    let r = resp.rect;
+    let word_rect = Rect::from_min_size(Pos2::new(r.right() - 3.0 - TOGGLE, r.top() + 3.0), vec2(TOGGLE, r.height() - 6.0));
+    let case_rect = word_rect.translate(vec2(-(TOGGLE + 2.0), 0.0));
+    if option_toggle(ui, case_rect, &format!("{name}_case"), opts.case_sensitive, "Match Case (Alt+C)", OptionIcon::Case).clicked() {
+        opts.case_sensitive = !opts.case_sensitive;
+    }
+    if option_toggle(ui, word_rect, &format!("{name}_word"), opts.whole_word, "Match Whole Word (Alt+W)", OptionIcon::WholeWord).clicked() {
+        opts.whole_word = !opts.whole_word;
+    }
+    resp
+}
+
+/// A line containing the searched text, under its file: the line number, then the line with
+/// the matches (`ranges`, character ranges of `preview`) highlighted.
+fn match_row(ui: &mut Ui, line: usize, preview: &str, ranges: &[(usize, usize)]) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(120.0), 22.0), Sense::click());
+    let style = ui.ctx().global_style();
+    let v = &style.visuals;
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, 0.0, v.widgets.hovered.weak_bg_fill);
+    }
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let cy = rect.center().y;
+    let small = egui::FontId::proportional(font.size - 1.5);
+    let num = ui.painter().text(Pos2::new(rect.left() + 22.0, cy), egui::Align2::LEFT_CENTER, line.to_string(), small, v.weak_text_color());
+    // The line, with the matches on the selection colour.
+    let mut job = egui::text::LayoutJob::default();
+    let plain = egui::TextFormat { font_id: font.clone(), color: v.text_color(), ..Default::default() };
+    let marked = egui::TextFormat {
+        font_id: font,
+        color: v.strong_text_color(),
+        background: v.selection.bg_fill.gamma_multiply(0.8),
+        ..Default::default()
+    };
+    let chars: Vec<char> = preview.chars().collect();
+    let mut at = 0;
+    for &(a, b) in ranges {
+        job.append(&chars[at..a].iter().collect::<String>(), 0.0, plain.clone());
+        job.append(&chars[a..b].iter().collect::<String>(), 0.0, marked.clone());
+        at = b;
+    }
+    job.append(&chars[at..].iter().collect::<String>(), 0.0, plain);
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let pos = Pos2::new(num.right() + 8.0, cy - galley.size().y / 2.0);
+    ui.painter().galley(pos, galley, v.text_color());
+    resp
+}
+
+/// One file in the search results: its name, then (dimmer) the folder it is in, and at the right
+/// end `count` (the number of matches) when given.
+fn result_row(ui: &mut Ui, name: &str, dir: &str, count: Option<&str>, selected: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(120.0), 22.0), Sense::click());
     let style = ui.ctx().global_style();
     let v = &style.visuals;
@@ -184,6 +258,16 @@ fn result_row(ui: &mut Ui, name: &str, dir: &str, selected: bool) -> egui::Respo
     if !dir.is_empty() {
         let small = egui::FontId::proportional(font.size - 1.5);
         ui.painter().text(Pos2::new(name_rect.right() + 8.0, cy), egui::Align2::LEFT_CENTER, dir, small, v.weak_text_color());
+    }
+    if let Some(count) = count {
+        let small = egui::FontId::proportional(font.size - 2.0);
+        let galley = ui.painter().layout_no_wrap(count.to_owned(), small, v.strong_text_color());
+        let badge = Rect::from_min_size(
+            Pos2::new(rect.right() - 8.0 - galley.size().x - 10.0, cy - galley.size().y / 2.0 - 1.0),
+            vec2(galley.size().x + 10.0, galley.size().y + 2.0),
+        );
+        ui.painter().rect_filled(badge, badge.height() / 2.0, v.widgets.inactive.bg_fill);
+        ui.painter().galley(badge.min + vec2(5.0, 1.0), galley, v.strong_text_color());
     }
     resp
 }
@@ -1350,73 +1434,52 @@ impl App {
         })
     }
 
-    /// The search panel (only while a folder is open): finds files by name in the explorer's folder. A field with the Match
-    /// Case and Whole Words toggles inside it (as in VS Code), and the files found; clicking one
-    /// opens it. Pattern rules are in `search.rs`.
+    /// The search panel (only while a folder is open): finds files in the explorer's folder by
+    /// name, and text in them. Two fields, each with Match Case and Whole Word toggles inside it
+    /// (as in VS Code): file name patterns, and the text to find. Without text, the files found
+    /// are listed; with text, the lines containing it, under their files. Clicking a file opens
+    /// it, clicking a line opens the file there. Pattern rules are in `search.rs`.
     fn search_panel(&mut self, ui: &mut Ui) {
         self.panel_header(ui, "SEARCH", None);
         ui.add_space(2.0);
         // Not shown without a folder (see `ui`).
         let Some(root) = self.explorer.as_ref().map(|e| e.root.clone()) else { return };
 
-        // Alt+C / Alt+W toggle the options while typing (as in VS Code). Handled before the field
-        // is drawn, so the letter is not typed into it.
-        let field_id = ui.make_persistent_id("search_field");
-        if ui.memory(|m| m.has_focus(field_id)) {
-            let (case, word) = ui.input_mut(|i| {
-                let c = i.consume_key(Modifiers::ALT, Key::C);
-                let w = i.consume_key(Modifiers::ALT, Key::W);
-                if c || w {
-                    i.events.retain(|e| !matches!(e, Event::Text(_)));
-                }
-                (c, w)
-            });
-            self.search.opts.case_sensitive ^= case;
-            self.search.opts.whole_word ^= word;
-        }
-
-        // Room on the right of the field for the two toggles.
-        const TOGGLE: f32 = 22.0;
-        let field = egui::TextEdit::singleline(&mut self.search.query)
-            .id(field_id)
-            .hint_text("Search files, e.g. abc*xyz.cpp, *.h")
-            .desired_width(ui.available_width())
-            .margin(egui::Margin { left: 6, right: (TOGGLE * 2.0 + 8.0) as i8, top: 5, bottom: 5 });
-        let resp = ui.add(field);
+        let files = search_field(ui, "search_files", &mut self.search.query, &mut self.search.opts, "Files, e.g. *.cpp, *.h (empty: all)");
         if std::mem::take(&mut self.search_focus) {
-            resp.request_focus();
+            files.request_focus();
         }
-        let r = resp.rect;
-        let word_rect = Rect::from_min_size(Pos2::new(r.right() - 3.0 - TOGGLE, r.top() + 3.0), vec2(TOGGLE, r.height() - 6.0));
-        let case_rect = word_rect.translate(vec2(-(TOGGLE + 2.0), 0.0));
-        let opts = &mut self.search.opts;
-        if option_toggle(ui, case_rect, "search_case", opts.case_sensitive, "Match Case (Alt+C)", OptionIcon::Case).clicked() {
-            opts.case_sensitive = !opts.case_sensitive;
-        }
-        if option_toggle(ui, word_rect, "search_word", opts.whole_word, "Match Whole Word (Alt+W)", OptionIcon::WholeWord).clicked() {
-            opts.whole_word = !opts.whole_word;
-        }
+        ui.add_space(3.0);
+        search_field(ui, "search_text", &mut self.search.text, &mut self.search.text_opts, "Text in the files");
 
         let ctx = ui.ctx().clone();
         self.search.update(Some(&root), move || ctx.request_repaint());
 
         ui.add_space(4.0);
         let n = self.search.results.len();
-        let plural = if n == 1 { "" } else { "s" };
+        let text = self.search.searching_text();
+        let what = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let found = if text {
+            let matches: usize = self.search.results.iter().map(|h| h.match_count()).sum();
+            format!("{} in {}", what(matches, "match", "matches"), what(n, "file", "files"))
+        } else {
+            what(n, "file", "files")
+        };
+        let asked = text || !self.search.query.trim().is_empty();
         ui.horizontal(|ui| {
-            if self.search.query.trim().is_empty() {
+            if !asked {
                 // Nothing searched for yet: no status line.
             } else if self.search.running() {
                 ui.spinner();
-                ui.weak(format!("Searching... {n} file{plural}"));
+                ui.weak(format!("Searching... {found}"));
             } else if n == 0 {
-                ui.weak("No files found.");
+                ui.weak(if text { "No results." } else { "No files found." });
             } else if self.search.truncated {
-                ui.weak(format!("The first {n} files (more match: refine the search)"));
+                ui.weak(format!("{found} (more: refine the search)"));
             } else {
-                ui.weak(format!("{n} file{plural}"));
+                ui.weak(found);
             }
-            if !self.search.query.trim().is_empty() {
+            if asked {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("\u{21bb}").on_hover_text("Search again").clicked() {
                         self.search.rerun();
@@ -1426,19 +1489,57 @@ impl App {
         });
         ui.add_space(2.0);
 
+        // One row per file, followed by its matching lines when searching for text.
+        enum Row {
+            File(usize),
+            Line(usize, usize),
+        }
+        let mut rows = Vec::new();
+        for (i, hit) in self.search.results.iter().enumerate() {
+            rows.push(Row::File(i));
+            rows.extend((0..hit.lines.len()).map(|j| Row::Line(i, j)));
+        }
         let focused_path = self.focused_disk_path();
-        let mut open: Option<PathBuf> = None;
-        egui::ScrollArea::both().id_salt("search_results").auto_shrink(false).show_rows(ui, 22.0, n, |ui, range| {
+        // The file to open, and where: (line, from, to).
+        let mut open: Option<(PathBuf, Option<(usize, usize, usize)>)> = None;
+        egui::ScrollArea::both().id_salt("search_results").auto_shrink(false).show_rows(ui, 22.0, rows.len(), |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            for hit in &self.search.results[range] {
-                let selected = focused_path.as_deref() == Some(hit.path.as_path());
-                if result_row(ui, &hit.name, &hit.dir, selected).on_hover_text(hit.path.display().to_string()).clicked() {
-                    open = Some(hit.path.clone());
+            for row in &rows[range] {
+                match *row {
+                    Row::File(i) => {
+                        let hit = &self.search.results[i];
+                        let selected = focused_path.as_deref() == Some(hit.path.as_path());
+                        let count = if !text {
+                            None
+                        } else if hit.binary_matches > 0 {
+                            Some(format!("{} (binary)", hit.binary_matches))
+                        } else {
+                            Some(hit.match_count().to_string())
+                        };
+                        let r = result_row(ui, &hit.name, &hit.dir, count.as_deref(), selected);
+                        if r.on_hover_text(hit.path.display().to_string()).clicked() {
+                            open = Some((hit.path.clone(), None));
+                        }
+                    }
+                    Row::Line(i, j) => {
+                        let hit = &self.search.results[i];
+                        let m = &hit.lines[j];
+                        if match_row(ui, m.line, &m.preview, &m.preview_ranges()).clicked() {
+                            let (a, b) = m.cols.first().copied().unwrap_or((0, 0));
+                            open = Some((hit.path.clone(), Some((m.line, a, b))));
+                        }
+                    }
                 }
             }
         });
-        if let Some(path) = open {
+        if let Some((path, at)) = open {
             self.open_disk_file(&path);
+            if let Some((line, a, b)) = at {
+                let tab = self.tabs.iter().find(|t| matches!(&t.content, crate::tabs::Content::DiskText { path: p, .. } if *p == path));
+                if let Some(id) = tab.map(|t| t.id) {
+                    crate::code::request_goto(ui.ctx(), ("disk", id), line, a, b);
+                }
+            }
         }
     }
 
