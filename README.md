@@ -35,6 +35,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 - Pan and zoom, fit to content
 - Themes: Graphite (default: neutral dark), Neon (navy, glowing cyan and violet lines), Amethyst (purple, glowing lilac and pink) and Light, chosen in File > Preferences or View > Theme. In the dark themes the canvas adapts the diagram's colours on screen; saved files and SVG exports keep the real colours
 - Explorer (first icon on the left, or File > Open Folder...): the folder as a tree like VS Code's, folders first; click a folder to expand it, a file to open it (text in the code editor, PNG/JPEG as a picture). Ctrl+S writes changed files back to disk; renaming a file's tab renames the file. The project remembers the folder and the open files
+- Find in a text file (Ctrl+F in its editor): a bar above the text with Match Case and Match Whole Word toggles; every match is highlighted, the current one more strongly, with "3 of 12" and previous / next buttons. Text selected on one line when it opens is what it looks for. Esc closes it and leaves the current match selected. The mouse wheel scrolls text files 5 lines per notch (File > Preferences)
 - Search (second icon on the left while a folder is open, or Ctrl+Shift+F): finds files in the explorer's folder (not inside `.git`) by name, and text in them. Two fields, each with its own toggles: Match Case (`Aa`, Alt+C) and Match Whole Word (Alt+W).
   - Files: name patterns. Plain text is found anywhere in the name (`main` finds `domain.rs`); with wildcards the whole name must match: `*` is any text, `?` one character (`abc*xyz.cpp`, `*.rs`). A pattern with `/` is matched against the path in the folder (`src/*.rs`). Several patterns separated by commas (or semicolons) find files matching any of them (`*.cpp, *.h, *.py`). With Whole Word, no match starts or ends inside a word, and in a wildcard pattern the text beside each `*` is a whole word too, so `abc*.cpp` finds `abc-old.cpp` but not `abcd.cpp`
   - Text: found inside the files that match the name patterns (every file, binary ones too, when Files is empty), as typed (no wildcards). The results list each file with its number of matches and, under it, the lines containing the text with the text highlighted; click a line to open the file there with the text selected. Binary files show only how many matches they have. Without text, the files found by name are listed; click one to open it
@@ -46,6 +47,7 @@ A cross-platform (Windows / Linux) diagram editor written in Rust with [eframe/e
 | Action | Input |
 | --- | --- |
 | Add shape | Click or drag from the palette (pick a category in the icon strip on the left) |
+| Find in the open text file | Ctrl+F (Enter / F3 next, Shift+Enter / Shift+F3 previous, Esc close) |
 | Search for files | Ctrl+Shift+F (Alt+C match case, Alt+W whole word) |
 | Show / hide the palette | Click the category's icon again, the ‹ button, or Ctrl+B |
 | Edit name / label | Double-click an object or line, or F2 |

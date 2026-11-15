@@ -170,7 +170,7 @@ fn option_toggle(ui: &mut Ui, rect: Rect, id: &str, on: bool, tip: &str, icon: O
 
 /// A search field with Match Case and Whole Word toggles inside its right end. Alt+C / Alt+W
 /// toggle them while typing in it (as in VS Code). `name` makes its ids unique.
-fn search_field(ui: &mut Ui, name: &str, value: &mut String, opts: &mut crate::search::SearchOptions, hint: &str) -> egui::Response {
+pub fn search_field(ui: &mut Ui, name: &str, value: &mut String, opts: &mut crate::search::SearchOptions, hint: &str) -> egui::Response {
     // Handled before the field is drawn, so the letter is not typed into it.
     let field_id = ui.make_persistent_id(name);
     if ui.memory(|m| m.has_focus(field_id)) {
@@ -445,6 +445,8 @@ pub struct App {
     pub name_before_edit: String,
     /// The colour theme (Graphite by default); chosen in the View menu and Preferences.
     pub theme: crate::render::Theme,
+    /// How many lines one notch of the mouse wheel scrolls in a text editor (Preferences).
+    pub wheel_lines: u32,
     /// The theme last applied to egui, so it is only changed when `theme` changes.
     applied_theme: Option<crate::render::Theme>,
 }
@@ -505,14 +507,44 @@ impl Default for App {
             open_file_request: None,
             name_before_edit: String::new(),
             theme: crate::render::Theme::default(),
+            wheel_lines: 5,
             applied_theme: None,
         }
     }
 }
 
 impl eframe::App for App {
+    /// The mouse wheel over a text editor scrolls `wheel_lines` lines per notch (egui's own speed
+    /// is about two lines). Touchpads are left as they are.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let rects = crate::code::editor_rects(ctx);
+        if rects.is_empty() {
+            return;
+        }
+        let per_line = ctx.options(|o| o.input_options.line_scroll_speed);
+        let mut pos = ctx.input(|i| i.pointer.latest_pos());
+        for ev in &mut raw_input.events {
+            match ev {
+                Event::PointerMoved(p) => pos = Some(*p),
+                Event::MouseWheel { unit, delta, source, modifiers, .. } if !modifiers.command => {
+                    let wheel = match unit {
+                        egui::MouseWheelUnit::Line => true,
+                        egui::MouseWheelUnit::Point => *source == egui::MouseWheelSource::Wheel,
+                        egui::MouseWheelUnit::Page => false,
+                    };
+                    let over = pos.and_then(|p| rects.iter().find(|(r, _)| r.contains(p)));
+                    if let (true, Some(&(_, row))) = (wheel, over) {
+                        *delta *= self.wheel_lines as f32 * row / per_line;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        crate::code::clear_editor_rects(&ctx);
         self.egui_ctx = ctx.clone();
         if self.applied_theme != Some(self.theme) {
             let egui_theme = if self.theme.is_dark() { egui::Theme::Dark } else { egui::Theme::Light };
@@ -599,7 +631,7 @@ impl App {
         if ctx.input(|i| i.viewport().focused) == Some(true) {
             ctx.send_viewport_cmd_to(prefs, ViewportCommand::Focus);
         }
-        let size = vec2(360.0, 280.0);
+        let size = vec2(360.0, 340.0);
         let mut builder = egui::ViewportBuilder::default()
             .with_title("Preferences")
             .with_inner_size(size)
@@ -624,6 +656,14 @@ impl App {
                         self.theme = t;
                     }
                 }
+                ui.add_space(12.0);
+                ui.strong("Text editor");
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Mouse wheel scrolls");
+                    ui.add(egui::DragValue::new(&mut self.wheel_lines).range(1..=30));
+                    ui.label("lines per notch");
+                });
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
                     ui.allocate_ui(vec2(100.0, 26.0), |ui| {
                         if rect_button(ui, "Close", false).clicked() {
@@ -1009,6 +1049,16 @@ impl App {
             && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)) {
             self.side = Some(SideView::Search);
             self.search_focus = true;
+        }
+        // Find in the focused text file: works also while typing in it.
+        if self.link_error.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::F)) {
+            let tab = self.focused_item().and_then(|id| self.index_of(id)).map(|i| &self.tabs[i]);
+            match tab.map(|t| (&t.content, t.id)) {
+                Some((crate::tabs::Content::DiskText { .. }, id)) => crate::code::open_find(ctx, ("disk", id)),
+                Some((crate::tabs::Content::Text { .. }, id)) => crate::code::open_find(ctx, ("text", id)),
+                Some((crate::tabs::Content::FileText { .. }, id)) => crate::code::open_find(ctx, ("file", id)),
+                _ => {}
+            }
         }
         if ctx.egui_wants_keyboard_input() || self.link_error.is_some() {
             return;

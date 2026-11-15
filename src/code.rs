@@ -344,7 +344,228 @@ fn char_index(text: &str, line: usize, col: usize) -> usize {
     (before + col).min(text.chars().count())
 }
 
-/// A code editor filling the space: line numbers on the left, highlighted text on the right.
+/// Where the code editors were drawn in the last frame, with their line height: the mouse wheel
+/// scrolls faster over them (see `App::raw_input_hook`).
+fn editor_rects_id() -> egui::Id {
+    egui::Id::unique("code_editor_rects")
+}
+
+/// The code editors drawn in the last frame: their visible area and line height.
+pub fn editor_rects(ctx: &egui::Context) -> Vec<(egui::Rect, f32)> {
+    ctx.data(|d| d.get_temp(editor_rects_id())).unwrap_or_default()
+}
+
+/// Forgets the editors' areas; call at the start of each frame, before the editors are drawn.
+pub fn clear_editor_rects(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(editor_rects_id(), Vec::<(egui::Rect, f32)>::new()));
+}
+
+/// Opens the find bar (Ctrl+F) of the code editor `id_salt` (as given to `code_editor`), with
+/// the keyboard focus in it, the next time the editor is drawn.
+pub fn open_find(ctx: &egui::Context, id_salt: impl std::hash::Hash + std::fmt::Debug) {
+    let key = egui::Id::unique(&id_salt).with("find_open");
+    ctx.data_mut(|d| d.insert_temp(key, true));
+}
+
+/// At most this many matches are found by the find bar.
+const MAX_FIND: usize = 10_000;
+
+/// An editor's find bar.
+#[derive(Clone, Default)]
+struct Find {
+    open: bool,
+    query: String,
+    opts: crate::search::SearchOptions,
+    /// The current match (index into `matches`).
+    current: usize,
+    /// Put the keyboard focus in the field (with its text selected).
+    focus: bool,
+    /// Scroll to the current match.
+    scroll: bool,
+    /// The text was edited: find the matches again.
+    edits: u64,
+    /// What `matches` were found for: query, options, text length, `edits`.
+    key: Option<(String, crate::search::SearchOptions, usize, u64)>,
+    /// The matches: character ranges in the text, and the same as byte ranges.
+    matches: Vec<(usize, usize)>,
+    bytes: Vec<(usize, usize)>,
+}
+
+impl Find {
+    /// Finds the matches again if the query, options or text changed. Returns whether it did.
+    fn refresh(&mut self, text: &str) -> bool {
+        let key = (self.query.clone(), self.opts, text.len(), self.edits);
+        if self.key.as_ref() == Some(&key) {
+            return false;
+        }
+        // Stay at (or after) the match that was current.
+        let was = self.matches.get(self.current).map_or(0, |m| m.0);
+        (self.matches, self.bytes) = find_all(text, &self.query, self.opts);
+        self.current = self.matches.iter().position(|m| m.0 >= was).unwrap_or(0);
+        self.key = Some(key);
+        true
+    }
+
+    fn step(&mut self, forward: bool) {
+        let n = self.matches.len();
+        if n > 0 {
+            self.current = if forward { (self.current + 1) % n } else { (self.current + n - 1) % n };
+            self.scroll = true;
+        }
+    }
+}
+
+/// Where `query` is in `text`: character ranges and the same as byte ranges (at most `MAX_FIND`).
+fn find_all(text: &str, query: &str, opts: crate::search::SearchOptions) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+    let (mut chars, mut bytes) = (Vec::new(), Vec::new());
+    let Some(tm) = crate::search::TextMatcher::new(query, opts) else { return (chars, bytes) };
+    let (mut char_at, mut byte_at) = (0, 0);
+    for line in text.split('\n') {
+        let found = tm.find_in_line(line);
+        if !found.is_empty() {
+            // Byte offset of each character of the line (and of its end).
+            let offsets: Vec<usize> = line.char_indices().map(|(b, _)| b).chain([line.len()]).collect();
+            for (a, b) in found {
+                chars.push((char_at + a, char_at + b));
+                bytes.push((byte_at + offsets[a], byte_at + offsets[b]));
+                if chars.len() == MAX_FIND {
+                    return (chars, bytes);
+                }
+            }
+        }
+        char_at += line.chars().count() + 1;
+        byte_at += line.len() + 1;
+    }
+    (chars, bytes)
+}
+
+/// Gives the parts of `job` in the byte ranges `marks` (sorted, not overlapping) a background:
+/// `cur_bg` for mark `current`, `bg` for the others.
+fn mark_ranges(job: &mut LayoutJob, marks: &[(usize, usize)], current: usize, bg: Color32, cur_bg: Color32) {
+    let ok = |i: usize| i <= job.text.len() && job.text.is_char_boundary(i);
+    if marks.is_empty() || !marks.iter().all(|&(a, b)| a < b && ok(a) && ok(b)) {
+        // None, or found in an older text (edited this frame): marked again next frame.
+        return;
+    }
+    let old = std::mem::take(&mut job.sections);
+    let mut k = 0;
+    for sec in old {
+        let (s, e) = (sec.byte_range.start.0, sec.byte_range.end.0);
+        while k < marks.len() && marks[k].1 <= s {
+            k += 1;
+        }
+        let (mut pos, mut m) = (s, k);
+        let mut leading = sec.leading_space;
+        while pos < e {
+            let mut format = sec.format.clone();
+            let end = if m < marks.len() && marks[m].0 <= pos {
+                format.background = if m == current { cur_bg } else { bg };
+                marks[m].1.min(e)
+            } else {
+                marks.get(m).map_or(e, |mk| mk.0.min(e))
+            };
+            job.sections.push(egui::text::LayoutSection {
+                leading_space: std::mem::take(&mut leading),
+                byte_range: egui::text::ByteIndex(pos)..egui::text::ByteIndex(end),
+                format,
+            });
+            pos = end;
+            if m < marks.len() && marks[m].1 <= pos {
+                m += 1;
+            }
+        }
+    }
+}
+
+/// Selects characters `a..b` of the editor shown in `out`, scrolls to them and, with `focus`,
+/// gives the editor the keyboard focus.
+fn select_range(ui: &Ui, out: &egui::text_edit::TextEditOutput, a: usize, b: usize, focus: bool) {
+    let mut state = out.state.clone();
+    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+        egui::text::CCursor::new(a),
+        egui::text::CCursor::new(b),
+    )));
+    state.store(ui.ctx(), out.response.id);
+    if focus {
+        out.response.request_focus();
+    }
+    scroll_to_char(ui, out, a);
+    ui.ctx().request_repaint();
+}
+
+fn scroll_to_char(ui: &Ui, out: &egui::text_edit::TextEditOutput, a: usize) {
+    let at = out.galley.pos_from_cursor(egui::text::CCursor::new(a)).translate(out.galley_pos.to_vec2());
+    ui.scroll_to_rect(at.expand(40.0), Some(egui::Align::Center));
+}
+
+/// The find bar above an editor: the field (with Match Case and Whole Word), "3 of 12", previous,
+/// next and close. Enter / F3 next, Shift+Enter / Shift+F3 previous, Esc closes. Returns whether
+/// it was closed.
+fn find_bar(ui: &mut Ui, find: &mut Find, editor_focused: bool, text: &str) -> bool {
+    let mut close = false;
+    let (enter, shift, esc, f3) = ui.input(|i| {
+        (i.key_pressed(egui::Key::Enter), i.modifiers.shift, i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::F3))
+    });
+    ui.horizontal(|ui| {
+        let width = ui.available_width().min(340.0);
+        let resp = ui.allocate_ui(egui::vec2(width, 28.0), |ui| {
+            crate::app::search_field(ui, "find_field", &mut find.query, &mut find.opts, "Find")
+        });
+        let resp = resp.inner;
+        if std::mem::take(&mut find.focus) {
+            resp.request_focus();
+            // The text selected, so typing replaces it.
+            if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+                let n = find.query.chars().count();
+                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(n),
+                )));
+                state.store(ui.ctx(), resp.id);
+            }
+        }
+        if find.refresh(text) {
+            find.scroll = true;
+        }
+        // A single-line field gives up the focus on Enter: step, and keep it.
+        if resp.lost_focus() && enter {
+            find.step(!shift);
+            resp.request_focus();
+        }
+        // Typing in the field this frame (it gives up the focus on Enter and Esc).
+        let in_field = resp.has_focus() || resp.lost_focus();
+        if (in_field || editor_focused) && f3 {
+            find.step(!shift);
+        }
+        if (in_field || editor_focused) && esc {
+            close = true;
+        }
+        let n = find.matches.len();
+        let status = if find.query.is_empty() {
+            "0 of 0".to_owned()
+        } else if n == 0 {
+            "No results".to_owned()
+        } else {
+            let more = if n == MAX_FIND { "+" } else { "" };
+            format!("{} of {n}{more}", find.current + 1)
+        };
+        ui.add_sized(egui::vec2(80.0, 20.0), egui::Label::new(egui::RichText::new(status).weak()));
+        if ui.add_enabled(n > 0, egui::Button::new("\u{2191}").small()).on_hover_text("Previous match (Shift+Enter)").clicked() {
+            find.step(false);
+        }
+        if ui.add_enabled(n > 0, egui::Button::new("\u{2193}").small()).on_hover_text("Next match (Enter)").clicked() {
+            find.step(true);
+        }
+        if ui.small_button("\u{d7}").on_hover_text("Close (Esc)").clicked() {
+            close = true;
+        }
+    });
+    ui.separator();
+    close
+}
+
+/// A code editor filling the space: line numbers on the left, highlighted text on the right,
+/// and a find bar above them while it is open (`open_find`, Ctrl+F).
 /// Returns the selection (character indices, start and end) while the editor has focus.
 pub fn code_editor(
     ui: &mut Ui,
@@ -358,12 +579,50 @@ pub fn code_editor(
     let font = TextStyle::Monospace.resolve(ui.style());
     let gutter_color = ui.visuals().weak_text_color();
     let editor = egui::Id::unique(&id_salt);
+    let text_id = editor.with("text");
     let goto: Option<(usize, usize, usize)> = ui.ctx().data_mut(|d| d.remove_temp(editor.with("goto")));
+
+    // The find bar.
+    let find_id = editor.with("find");
+    let mut find: Find = ui.ctx().data_mut(|d| d.get_temp(find_id)).unwrap_or_default();
+    if ui.ctx().data_mut(|d| d.remove_temp::<bool>(editor.with("find_open"))).is_some() {
+        find.open = true;
+        find.focus = true;
+        // The selected text (on one line) is what to find.
+        let selected = egui::TextEdit::load_state(ui.ctx(), text_id).and_then(|s| s.cursor.char_range()).map(|r| {
+            let [a, b] = r.sorted_cursors();
+            text.chars().skip(a.index.0).take(b.index.0 - a.index.0).collect::<String>()
+        });
+        if let Some(sel) = selected.filter(|s| !s.is_empty() && !s.contains('\n')) {
+            find.query = sel;
+        }
+        find.scroll = true;
+    }
+    let editor_focused = ui.memory(|m| m.has_focus(text_id));
+    let mut closed = false;
+    if find.open {
+        ui.push_id(editor, |ui| {
+            closed = find_bar(ui, &mut find, editor_focused, text);
+        });
+        if closed {
+            find.open = false;
+        }
+    }
+    let marks = (find.open && !find.query.is_empty()).then(|| (find.bytes.clone(), find.current));
+    let (bg, cur_bg) = if ui.visuals().dark_mode {
+        (Color32::from_rgba_unmultiplied(255, 200, 60, 45), Color32::from_rgba_unmultiplied(255, 150, 0, 150))
+    } else {
+        (Color32::from_rgba_unmultiplied(255, 200, 0, 90), Color32::from_rgba_unmultiplied(255, 140, 0, 170))
+    };
+
     let mut layouter = |ui: &Ui, buf: &dyn TextBuffer, _wrap: f32| {
-        let job = highlight(ui, editor, buf.as_str(), format);
+        let mut job = highlight(ui, editor, buf.as_str(), format);
+        if let Some((m, cur)) = &marks {
+            mark_ranges(&mut job, m, *cur, bg, cur_bg);
+        }
         ui.fonts_mut(|f| f.layout_job(job))
     };
-    egui::ScrollArea::both().id_salt(id_salt).auto_shrink(false).show(ui, |ui| {
+    let area = egui::ScrollArea::both().id_salt(id_salt).auto_shrink(false).show(ui, |ui| {
         ui.horizontal_top(|ui| {
             let mut numbers: String =
                 (1..=lines).map(|n| format!("{n:>digits$}")).collect::<Vec<_>>().join("\n");
@@ -377,6 +636,7 @@ pub fn code_editor(
                     .desired_rows(lines),
             );
             let out = egui::TextEdit::multiline(text)
+                .id(text_id)
                 .code_editor()
                 .frame(egui::Frame::NONE)
                 .desired_width(f32::INFINITY)
@@ -386,16 +646,18 @@ pub fn code_editor(
                 .show(ui);
             if let Some((line, from, to)) = goto {
                 let (a, b) = (char_index(text, line, from), char_index(text, line, to));
-                let mut state = out.state.clone();
-                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-                    egui::text::CCursor::new(a),
-                    egui::text::CCursor::new(b),
-                )));
-                state.store(ui.ctx(), out.response.id);
-                out.response.request_focus();
-                let at = out.galley.pos_from_cursor(egui::text::CCursor::new(a)).translate(out.galley_pos.to_vec2());
-                ui.scroll_to_rect(at.expand(40.0), Some(egui::Align::Center));
-                ui.ctx().request_repaint();
+                select_range(ui, &out, a, b, true);
+            }
+            if let Some(&(a, b)) = find.matches.get(find.current) {
+                if closed {
+                    // Closing the find bar leaves the current match selected in the editor.
+                    select_range(ui, &out, a, b, true);
+                } else if std::mem::take(&mut find.scroll) {
+                    scroll_to_char(ui, &out, a);
+                }
+            }
+            if out.response.changed() {
+                find.edits += 1;
             }
             if out.response.has_focus() {
                 if let Some(r) = out.cursor_range {
@@ -405,12 +667,36 @@ pub fn code_editor(
             }
         });
     });
+    ui.ctx().data_mut(|d| d.insert_temp(find_id, find));
+    // For the faster mouse wheel over editors.
+    let row = ui.fonts_mut(|f| f.row_height(&font));
+    ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<Vec<(egui::Rect, f32)>>(editor_rects_id()).push((area.inner_rect, row)));
     selection
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_all_and_mark_ranges() {
+        let opts = crate::search::SearchOptions::default();
+        let (chars, bytes) = find_all("a\u{e9}b ab\nAB x", "ab", opts);
+        assert_eq!(chars, [(4, 6), (7, 9)]);
+        assert_eq!(bytes, [(5, 7), (8, 10)]);
+        let font = FontId::monospace(12.0);
+        let mut job = LayoutJob::simple("xx ab yy ab".into(), font, Color32::WHITE, f32::INFINITY);
+        mark_ranges(&mut job, &[(3, 5), (9, 11)], 1, Color32::RED, Color32::GREEN);
+        let parts: Vec<_> = job
+            .sections
+            .iter()
+            .map(|s| (&job.text[s.byte_range.start.0..s.byte_range.end.0], s.format.background))
+            .collect();
+        assert_eq!(
+            parts,
+            [("xx ", Color32::TRANSPARENT), ("ab", Color32::RED), (" yy ", Color32::TRANSPARENT), ("ab", Color32::GREEN)]
+        );
+    }
 
     #[test]
     fn char_index_of_line_and_column() {
