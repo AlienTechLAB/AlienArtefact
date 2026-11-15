@@ -7,6 +7,7 @@ mod code;
 mod explorer;
 mod model;
 mod render;
+mod search;
 mod svg;
 mod tabs;
 mod terminal;

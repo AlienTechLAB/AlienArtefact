@@ -120,6 +120,74 @@ fn files_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     painter.add(egui::Shape::line(vec![p(4.0, -12.0), p(4.0, -7.0), p(9.0, -7.0)], stroke));
 }
 
+/// The search icon: a magnifying glass.
+fn search_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let lens = Pos2::new(c.x + 2.0, c.y - 2.0);
+    painter.circle_stroke(lens, 7.0, stroke);
+    painter.line_segment([Pos2::new(lens.x - 5.0, lens.y + 5.0), Pos2::new(c.x - 9.0, c.y + 9.0)], Stroke::new(stroke.width + 0.8, stroke.color));
+}
+
+/// What a search option toggle shows.
+#[derive(Clone, Copy)]
+enum OptionIcon {
+    /// "Aa": match case.
+    Case,
+    /// "ab" underlined: whole words.
+    WholeWord,
+}
+
+/// A small on/off button drawn in `rect` (inside the search field), highlighted when `on`.
+fn option_toggle(ui: &mut Ui, rect: Rect, id: &str, on: bool, tip: &str, icon: OptionIcon) -> egui::Response {
+    let resp = ui.interact(rect, ui.scope_id().with(id), Sense::click()).on_hover_text(tip);
+    let style = ui.ctx().global_style();
+    let v = &style.visuals;
+    let painter = ui.painter();
+    if on {
+        painter.rect_filled(rect, 3.0, v.selection.bg_fill.gamma_multiply(0.7));
+        painter.rect_stroke(rect, 3.0, Stroke::new(1.0, v.selection.stroke.color), egui::StrokeKind::Inside);
+    } else if resp.hovered() {
+        painter.rect_filled(rect, 3.0, v.widgets.hovered.weak_bg_fill);
+    }
+    let ink = if on { v.strong_text_color() } else { v.text_color() };
+    let font = egui::FontId::proportional(12.0);
+    match icon {
+        OptionIcon::Case => {
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Aa", font, ink);
+        }
+        OptionIcon::WholeWord => {
+            let c = rect.center();
+            painter.text(Pos2::new(c.x, c.y - 1.5), egui::Align2::CENTER_CENTER, "ab", font, ink);
+            // A bracket under the letters: the word's ends.
+            let (l, r, y) = (c.x - 6.5, c.x + 6.5, c.y + 6.0);
+            painter.add(egui::Shape::line(
+                vec![Pos2::new(l, y - 2.5), Pos2::new(l, y), Pos2::new(r, y), Pos2::new(r, y - 2.5)],
+                Stroke::new(1.0, ink),
+            ));
+        }
+    }
+    resp
+}
+
+/// One file in the search results: its name, then (dimmer) the folder it is in.
+fn result_row(ui: &mut Ui, name: &str, dir: &str, selected: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(120.0), 22.0), Sense::click());
+    let style = ui.ctx().global_style();
+    let v = &style.visuals;
+    if selected {
+        ui.painter().rect_filled(rect, 0.0, v.selection.bg_fill.gamma_multiply(0.6));
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, 0.0, v.widgets.hovered.weak_bg_fill);
+    }
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let cy = rect.center().y;
+    let name_rect = ui.painter().text(Pos2::new(rect.left() + 8.0, cy), egui::Align2::LEFT_CENTER, name, font.clone(), v.text_color());
+    if !dir.is_empty() {
+        let small = egui::FontId::proportional(font.size - 1.5);
+        ui.painter().text(Pos2::new(name_rect.right() + 8.0, cy), egui::Align2::LEFT_CENTER, dir, small, v.weak_text_color());
+    }
+    resp
+}
+
 /// One row of the explorer tree: indented by `depth`, a chevron for folders (`expanded` is
 /// `None` for files), the name; highlighted when `selected`. `strong` for the root row.
 fn tree_row(ui: &mut Ui, depth: usize, name: &str, expanded: Option<bool>, selected: bool, strong: bool) -> egui::Response {
@@ -175,6 +243,8 @@ fn flowchart_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
 pub enum SideView {
     /// The open folder as a tree.
     Explorer,
+    /// Finding files in the open folder by name.
+    Search,
     /// The diagram palette.
     Diagram,
 }
@@ -279,6 +349,10 @@ pub struct App {
     pub palette_view: PaletteView,
     /// The folder open in the explorer.
     pub explorer: Option<crate::explorer::Explorer>,
+    /// The search panel: finding files by name in the explorer's folder.
+    pub search: crate::search::FileSearch,
+    /// Put the keyboard focus on the search field when it is next drawn.
+    pub search_focus: bool,
     /// The egui context, for terminals (their reader threads ask for repaints).
     pub egui_ctx: egui::Context,
     /// A text file (in the active diagram) whose contents should be opened in a tab.
@@ -341,6 +415,8 @@ impl Default for App {
             last_side: SideView::Diagram,
             palette_view: PaletteView::Objects,
             explorer: None,
+            search: Default::default(),
+            search_focus: false,
             egui_ctx: egui::Context::default(),
             open_file_request: None,
             name_before_edit: String::new(),
@@ -376,6 +452,9 @@ impl eframe::App for App {
         match self.side {
             Some(SideView::Explorer) => {
                 egui::Panel::left("explorer").resizable(true).default_size(220.0).show(ui, |ui| self.explorer_panel(ui));
+            }
+            Some(SideView::Search) => {
+                egui::Panel::left("search").resizable(true).default_size(260.0).show(ui, |ui| self.search_panel(ui));
             }
             Some(SideView::Diagram) => {
                 let view = self.palette_view;
@@ -831,6 +910,11 @@ impl App {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        // Search for files: works also while typing in an editor.
+        if self.link_error.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)) {
+            self.side = Some(SideView::Search);
+            self.search_focus = true;
+        }
         if ctx.egui_wants_keyboard_input() || self.link_error.is_some() {
             return;
         }
@@ -1112,11 +1196,12 @@ impl App {
     fn activity_bar(&mut self, ui: &mut Ui) {
         let accent = self.theme.palette().map_or(Color32::from_rgb(0, 120, 215), |p| p.line);
         ui.add_space(6.0);
-        for view in [SideView::Explorer, SideView::Diagram] {
+        for view in [SideView::Explorer, SideView::Search, SideView::Diagram] {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
             let shown = self.side == Some(view);
             let title = match view {
                 SideView::Explorer => "Explorer",
+                SideView::Search => "Search (Ctrl+Shift+F)",
                 SideView::Diagram => "Diagram shapes",
             };
             let resp = resp.on_hover_text(if shown { format!("{title} (click to hide, Ctrl+B)") } else { title.to_owned() });
@@ -1130,6 +1215,7 @@ impl App {
             let col = if shown || resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
             match view {
                 SideView::Explorer => files_icon(painter, rect.center(), Stroke::new(1.4, col)),
+                SideView::Search => search_icon(painter, rect.center(), Stroke::new(1.6, col)),
                 SideView::Diagram => flowchart_icon(painter, rect.center(), Stroke::new(1.3, col)),
             }
             if resp.clicked() {
@@ -1137,6 +1223,7 @@ impl App {
                     self.toggle_palette();
                 } else {
                     self.side = Some(view);
+                    self.search_focus = view == SideView::Search;
                 }
             }
         }
@@ -1187,11 +1274,7 @@ impl App {
         let root = ex.root.clone();
         let root_open = ex.expanded.contains(&root);
         // The file of the focused tab is highlighted.
-        let focused_path = self.focused_item().and_then(|id| self.index_of(id)).and_then(|i| match &self.tabs[i].content {
-            crate::tabs::Content::DiskText { path, .. } => Some(path.clone()),
-            crate::tabs::Content::Image { path, .. } => Some(PathBuf::from(path)),
-            _ => None,
-        });
+        let focused_path = self.focused_disk_path();
         let mut toggle: Option<PathBuf> = None;
         let mut open: Option<PathBuf> = None;
         let mut refresh = false;
@@ -1226,8 +1309,120 @@ impl App {
             }
             if refresh {
                 ex.refresh();
+                self.search.rerun();
             }
         }
+        if let Some(path) = open {
+            self.open_disk_file(&path);
+        }
+    }
+
+    /// The file on disk shown in the focused tab, if it shows one.
+    fn focused_disk_path(&mut self) -> Option<PathBuf> {
+        self.focused_item().and_then(|id| self.index_of(id)).and_then(|i| match &self.tabs[i].content {
+            crate::tabs::Content::DiskText { path, .. } => Some(path.clone()),
+            crate::tabs::Content::Image { path, .. } => Some(PathBuf::from(path)),
+            _ => None,
+        })
+    }
+
+    /// The search panel: finds files by name in the explorer's folder. A field with the Match
+    /// Case and Whole Words toggles inside it (as in VS Code), and the files found; clicking one
+    /// opens it. Pattern rules are in `search.rs`.
+    fn search_panel(&mut self, ui: &mut Ui) {
+        self.panel_header(ui, "SEARCH");
+        ui.add_space(2.0);
+        let Some(root) = self.explorer.as_ref().map(|e| e.root.clone()) else {
+            ui.add_space(6.0);
+            ui.label("Open a folder to search its files.");
+            ui.add_space(8.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            if rect_button(ui, "Open Folder", true).clicked() {
+                self.open_folder();
+                self.side = Some(SideView::Search);
+                self.search_focus = true;
+            }
+            return;
+        };
+
+        // Alt+C / Alt+W toggle the options while typing (as in VS Code). Handled before the field
+        // is drawn, so the letter is not typed into it.
+        let field_id = ui.make_persistent_id("search_field");
+        if ui.memory(|m| m.has_focus(field_id)) {
+            let (case, word) = ui.input_mut(|i| {
+                let c = i.consume_key(Modifiers::ALT, Key::C);
+                let w = i.consume_key(Modifiers::ALT, Key::W);
+                if c || w {
+                    i.events.retain(|e| !matches!(e, Event::Text(_)));
+                }
+                (c, w)
+            });
+            self.search.opts.case_sensitive ^= case;
+            self.search.opts.whole_word ^= word;
+        }
+
+        // Room on the right of the field for the two toggles.
+        const TOGGLE: f32 = 22.0;
+        let field = egui::TextEdit::singleline(&mut self.search.query)
+            .id(field_id)
+            .hint_text("Search files, e.g. abc*xyz.cpp")
+            .desired_width(ui.available_width())
+            .margin(egui::Margin { left: 6, right: (TOGGLE * 2.0 + 8.0) as i8, top: 5, bottom: 5 });
+        let resp = ui.add(field);
+        if std::mem::take(&mut self.search_focus) {
+            resp.request_focus();
+        }
+        let r = resp.rect;
+        let word_rect = Rect::from_min_size(Pos2::new(r.right() - 3.0 - TOGGLE, r.top() + 3.0), vec2(TOGGLE, r.height() - 6.0));
+        let case_rect = word_rect.translate(vec2(-(TOGGLE + 2.0), 0.0));
+        let opts = &mut self.search.opts;
+        if option_toggle(ui, case_rect, "search_case", opts.case_sensitive, "Match Case (Alt+C)", OptionIcon::Case).clicked() {
+            opts.case_sensitive = !opts.case_sensitive;
+        }
+        if option_toggle(ui, word_rect, "search_word", opts.whole_word, "Match Whole Word (Alt+W)", OptionIcon::WholeWord).clicked() {
+            opts.whole_word = !opts.whole_word;
+        }
+
+        let ctx = ui.ctx().clone();
+        self.search.update(Some(&root), move || ctx.request_repaint());
+
+        ui.add_space(4.0);
+        let n = self.search.results.len();
+        let plural = if n == 1 { "" } else { "s" };
+        ui.horizontal(|ui| {
+            if self.search.query.trim().is_empty() {
+                ui.weak("Type a file name, or a pattern: * is any text, ? one character, / matches the path.");
+            } else if self.search.running() {
+                ui.spinner();
+                ui.weak(format!("Searching... {n} file{plural}"));
+            } else if n == 0 {
+                ui.weak("No files found.");
+            } else if self.search.truncated {
+                ui.weak(format!("The first {n} files (more match: refine the search)"));
+            } else {
+                ui.weak(format!("{n} file{plural}"));
+            }
+            if !self.search.query.trim().is_empty() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("\u{21bb}").on_hover_text("Search again").clicked() {
+                        self.search.rerun();
+                    }
+                });
+            }
+        });
+        ui.add_space(2.0);
+
+        let focused_path = self.focused_disk_path();
+        let mut open: Option<PathBuf> = None;
+        egui::ScrollArea::both().id_salt("search_results").auto_shrink(false).show_rows(ui, 22.0, n, |ui, range| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for hit in &self.search.results[range] {
+                let selected = focused_path.as_deref() == Some(hit.path.as_path());
+                if result_row(ui, &hit.name, &hit.dir, selected).on_hover_text(hit.path.display().to_string()).clicked() {
+                    open = Some(hit.path.clone());
+                }
+            }
+        });
         if let Some(path) = open {
             self.open_disk_file(&path);
         }
