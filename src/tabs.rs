@@ -931,9 +931,14 @@ impl App {
             line_count_label(ui, text);
         });
         ui.separator();
-        if let Some((a, b)) = crate::code::code_editor(ui, ("disk", id), text, Some(saved), format) {
+        let nav = crate::lsp::is_c_family(path);
+        let out = crate::code::code_editor(ui, ("disk", id), text, Some(saved), format, nav);
+        if let Some((a, b)) = out.selection {
             let sel = crate::code::selection_of(text, a, b, &name, id, None);
             self.keep_selection(sel, ui);
+        }
+        if let Some((kind, at)) = out.nav {
+            self.nav_request = Some((id, kind, at));
         }
     }
 
@@ -999,7 +1004,7 @@ impl App {
         });
         ui.separator();
         let format = crate::model::text_format(&n.text);
-        if let Some((a, b)) = crate::code::code_editor(ui, ("file", id), &mut n.content, None, format) {
+        if let Some((a, b)) = crate::code::code_editor(ui, ("file", id), &mut n.content, None, format, false).selection {
             let sel = crate::code::selection_of(&n.content, a, b, &n.text, diagram, Some(node));
             self.keep_selection(sel, ui);
         }
@@ -1027,7 +1032,7 @@ impl App {
             line_count_label(ui, text);
         });
         ui.separator();
-        if let Some((a, b)) = crate::code::code_editor(ui, ("text", id), text, Some(saved), format) {
+        if let Some((a, b)) = crate::code::code_editor(ui, ("text", id), text, Some(saved), format, false).selection {
             let sel = crate::code::selection_of(text, a, b, &name, id, None);
             self.keep_selection(sel, ui);
         }

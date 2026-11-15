@@ -214,7 +214,7 @@ pub struct LineMatch {
 const PREVIEW_CHARS: usize = 200;
 
 impl LineMatch {
-    fn new(line: usize, text: &str, cols: Vec<(usize, usize)>) -> LineMatch {
+    pub fn new(line: usize, text: &str, cols: Vec<(usize, usize)>) -> LineMatch {
         let chars: Vec<char> = text.chars().collect();
         let mut start = chars.iter().take_while(|c| c.is_whitespace()).count();
         if let Some(&(first, _)) = cols.first() {

@@ -6,6 +6,7 @@ mod c_family;
 mod canvas;
 mod code;
 mod explorer;
+mod lsp;
 mod model;
 mod render;
 mod search;

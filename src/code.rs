@@ -738,19 +738,71 @@ struct Changes {
     lines: Vec<LineChange>,
 }
 
+/// What a code editor reports each frame.
+#[derive(Default)]
+pub struct EditorOutput {
+    /// The selection (character indices, start and end) while the editor has focus.
+    pub selection: Option<(usize, usize)>,
+    /// A navigation chosen in the right-click menu or with its shortcut, at that character.
+    pub nav: Option<(crate::lsp::NavKind, usize)>,
+}
+
+/// The navigation shortcuts (as in VS Code), with Alt+O handled separately.
+fn nav_shortcut(i: &mut egui::InputState) -> Option<crate::lsp::NavKind> {
+    use crate::lsp::NavKind;
+    use egui::{Key, Modifiers};
+    if i.consume_key(Modifiers::SHIFT | Modifiers::ALT, Key::F12) {
+        Some(NavKind::FindAllReferences)
+    } else if i.consume_key(Modifiers::SHIFT, Key::F12) {
+        Some(NavKind::References)
+    } else if i.consume_key(Modifiers::NONE, Key::F12) {
+        Some(NavKind::Definition)
+    } else if i.consume_key(Modifiers::ALT, Key::O) {
+        // Alt+O must not type an "o".
+        i.events.retain(|e| !matches!(e, egui::Event::Text(_)));
+        Some(NavKind::SwitchHeaderSource)
+    } else {
+        None
+    }
+}
+
+/// The right-click menu of a C/C++ editor: the navigation commands. Returns the one clicked.
+fn nav_menu(ui: &mut Ui) -> Option<crate::lsp::NavKind> {
+    use crate::lsp::NavKind::*;
+    let mut chosen = None;
+    let mut item = |ui: &mut Ui, kind: crate::lsp::NavKind, keys: &str| {
+        if ui.add(egui::Button::new(kind.title()).shortcut_text(keys)).clicked() {
+            chosen = Some(kind);
+            ui.close();
+        }
+    };
+    ui.set_min_width(260.0);
+    item(ui, Definition, "F12");
+    item(ui, Declaration, "");
+    item(ui, TypeDefinition, "");
+    item(ui, References, "Shift+F12");
+    ui.separator();
+    item(ui, FindAllReferences, "Shift+Alt+F12");
+    ui.separator();
+    item(ui, SwitchHeaderSource, "Alt+O");
+    chosen
+}
+
 /// A code editor filling the space: line numbers on the left, highlighted text on the right,
 /// and a find bar above them while it is open (`open_find`, Ctrl+F). With the `saved` text,
 /// a bar between the numbers and the text marks the lines added (green) and modified (yellow)
-/// since then.
-/// Returns the selection (character indices, start and end) while the editor has focus.
+/// since then. With `nav` (C and C++ files on disk), a right-click menu and shortcuts for going
+/// to definitions and references (see `EditorOutput::nav`).
 pub fn code_editor(
     ui: &mut Ui,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
     text: &mut String,
     saved: Option<&str>,
     format: &str,
-) -> Option<(usize, usize)> {
+    nav: bool,
+) -> EditorOutput {
     let mut selection = None;
+    let mut nav_out = None;
     let lines = text.split('\n').count().max(1);
     let digits = lines.to_string().len().max(3);
     let font = TextStyle::Monospace.resolve(ui.style());
@@ -776,6 +828,7 @@ pub fn code_editor(
         find.scroll = true;
     }
     let editor_focused = ui.memory(|m| m.has_focus(text_id));
+    let shortcut = if nav && editor_focused { ui.input_mut(nav_shortcut) } else { None };
     let mut closed = false;
     if find.open {
         ui.push_id(editor, |ui| {
@@ -839,6 +892,32 @@ pub fn code_editor(
             if out.response.changed() {
                 find.edits += 1;
             }
+            if nav {
+                // Right-click: the cursor moves to the click (unless it is in the selection), and
+                // the menu's commands apply there.
+                let menu_at = editor.with("menu_at");
+                if out.response.secondary_clicked() {
+                    if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
+                        let at = out.galley.cursor_from_pos(p - out.galley_pos).index.0;
+                        let in_selection = out.state.cursor.char_range().is_some_and(|r| {
+                            let [a, b] = r.sorted_cursors();
+                            a.index.0 <= at && at <= b.index.0 && a.index.0 != b.index.0
+                        });
+                        if !in_selection {
+                            select_range(ui, &out, at, at, true);
+                        }
+                        ui.ctx().data_mut(|d| d.insert_temp(menu_at, at));
+                    }
+                }
+                if let Some(kind) = egui::Popup::context_menu(&out.response).show(nav_menu).and_then(|r| r.inner) {
+                    let at = ui.ctx().data(|d| d.get_temp::<usize>(menu_at)).unwrap_or(0);
+                    nav_out = Some((kind, at));
+                }
+                if let Some(kind) = shortcut {
+                    let at = out.cursor_range.or(out.state.cursor.char_range()).map_or(0, |r| r.primary.index.0);
+                    nav_out = Some((kind, at));
+                }
+            }
             if let Some(saved) = saved {
                 let changes_id = editor.with("changes");
                 let mut changes: Changes = ui.ctx().data_mut(|d| d.get_temp(changes_id)).unwrap_or_default();
@@ -876,7 +955,7 @@ pub fn code_editor(
     // For the faster mouse wheel over editors.
     let row = ui.fonts_mut(|f| f.row_height(&font));
     ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<Vec<(egui::Rect, f32)>>(editor_rects_id()).push((area.inner_rect, row)));
-    selection
+    EditorOutput { selection, nav: nav_out }
 }
 
 #[cfg(test)]

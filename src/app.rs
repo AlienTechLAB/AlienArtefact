@@ -241,6 +241,85 @@ fn match_row(ui: &mut Ui, line: usize, preview: &str, ranges: &[(usize, usize)])
     resp
 }
 
+/// A list of files found, each followed by its lines (search results, references): rows of 22
+/// points, only those in view drawn. `counts` shows each file's number of matches. Returns the
+/// file clicked, and where for a line: (line from 1, from, to).
+fn hit_list(
+    ui: &mut Ui,
+    salt: &str,
+    hits: &[crate::search::Hit],
+    counts: bool,
+    focused: Option<&std::path::Path>,
+) -> Option<(PathBuf, Option<(usize, usize, usize)>)> {
+    enum Row {
+        File(usize),
+        Line(usize, usize),
+    }
+    let mut rows = Vec::new();
+    for (i, hit) in hits.iter().enumerate() {
+        rows.push(Row::File(i));
+        rows.extend((0..hit.lines.len()).map(|j| Row::Line(i, j)));
+    }
+    let mut open = None;
+    egui::ScrollArea::both().id_salt(salt).auto_shrink(false).show_rows(ui, 22.0, rows.len(), |ui, range| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for row in &rows[range] {
+            match *row {
+                Row::File(i) => {
+                    let hit = &hits[i];
+                    let selected = focused == Some(hit.path.as_path());
+                    let count = if !counts {
+                        None
+                    } else if hit.binary_matches > 0 {
+                        Some(format!("{} (binary)", hit.binary_matches))
+                    } else {
+                        Some(hit.match_count().to_string())
+                    };
+                    let r = result_row(ui, &hit.name, &hit.dir, count.as_deref(), selected);
+                    if r.on_hover_text(hit.path.display().to_string()).clicked() {
+                        open = Some((hit.path.clone(), None));
+                    }
+                }
+                Row::Line(i, j) => {
+                    let hit = &hits[i];
+                    let m = &hit.lines[j];
+                    if match_row(ui, m.line, &m.preview, &m.preview_ranges()).clicked() {
+                        let (a, b) = m.cols.first().copied().unwrap_or((0, 0));
+                        open = Some((hit.path.clone(), Some((m.line, a, b))));
+                    }
+                }
+            }
+        }
+    });
+    open
+}
+
+/// Places found by code navigation, as files with lines: the References panel, or the pop-up
+/// list of Go to ... (at `pos`).
+pub struct NavList {
+    title: String,
+    hits: Vec<crate::search::Hit>,
+    pos: Option<Pos2>,
+}
+
+/// The identifier around character `col` of `line` (letters, digits, `_`), or "".
+fn word_at(line: &str, col: usize) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let is_word = |c: &char| c.is_alphanumeric() || *c == '_';
+    let col = col.min(chars.len());
+    let start = (0..col).rev().take_while(|&i| is_word(&chars[i])).last().unwrap_or(col);
+    let end = (col..chars.len()).take_while(|&i| is_word(&chars[i])).last().map_or(col, |i| i + 1);
+    chars[start..end].iter().collect()
+}
+
+/// The references icon: a list (three bullets and lines).
+fn references_icon(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    for dy in [-7.0, 0.0, 7.0] {
+        painter.circle_filled(Pos2::new(c.x - 8.0, c.y + dy), 1.6, stroke.color);
+        painter.line_segment([Pos2::new(c.x - 4.0, c.y + dy), Pos2::new(c.x + 10.0, c.y + dy)], stroke);
+    }
+}
+
 /// One file in the search results: its name, then (dimmer) the folder it is in, and at the right
 /// end `count` (the number of matches) when given.
 fn result_row(ui: &mut Ui, name: &str, dir: &str, count: Option<&str>, selected: bool) -> egui::Response {
@@ -329,6 +408,8 @@ pub enum SideView {
     Explorer,
     /// Finding files in the open folder by name.
     Search,
+    /// The results of Find All References (only while there are some).
+    References,
     /// The diagram palette.
     Diagram,
 }
@@ -445,6 +526,18 @@ pub struct App {
     pub name_before_edit: String,
     /// The colour theme (Graphite by default); chosen in the View menu and Preferences.
     pub theme: crate::render::Theme,
+    /// clangd, for code navigation in C/C++ files (started when first needed).
+    pub lsp: Option<crate::lsp::Lsp>,
+    /// A navigation asked for in an editor this frame: tab, what, at which character.
+    pub nav_request: Option<(u64, crate::lsp::NavKind, usize)>,
+    /// The file, symbol and mouse position of the last navigation asked for.
+    nav_origin: Option<PathBuf>,
+    nav_symbol: String,
+    nav_pos: Option<Pos2>,
+    /// Several places found by Go to ...: listed in a pop-up.
+    nav_popup: Option<NavList>,
+    /// The results of Find All References, in the References panel.
+    references: Option<NavList>,
     /// How many lines one notch of the mouse wheel scrolls in a text editor (Preferences).
     pub wheel_lines: u32,
     /// The theme last applied to egui, so it is only changed when `theme` changes.
@@ -508,6 +601,13 @@ impl Default for App {
             name_before_edit: String::new(),
             theme: crate::render::Theme::default(),
             wheel_lines: 5,
+            lsp: None,
+            nav_request: None,
+            nav_origin: None,
+            nav_symbol: String::new(),
+            nav_pos: None,
+            nav_popup: None,
+            references: None,
             applied_theme: None,
         }
     }
@@ -564,6 +664,14 @@ impl eframe::App for App {
         // VS Code-style: a strip of category icons, and the palette of the chosen category beside it.
         // No inner margin, so the highlight bar of the shown category sits on the window's edge.
         let strip = egui::Frame::side_top_panel(ui.style()).inner_margin(0.0);
+        if self.references.is_none() {
+            if self.side == Some(SideView::References) {
+                self.side = Some(SideView::Explorer);
+            }
+            if self.last_side == SideView::References {
+                self.last_side = SideView::Explorer;
+            }
+        }
         // Search needs an open folder: when it is closed, the explorer shows instead.
         if self.explorer.is_none() {
             if self.side == Some(SideView::Search) {
@@ -577,6 +685,9 @@ impl eframe::App for App {
         match self.side {
             Some(SideView::Explorer) => {
                 egui::Panel::left("explorer").resizable(true).default_size(220.0).show(ui, |ui| self.explorer_panel(ui));
+            }
+            Some(SideView::References) => {
+                egui::Panel::left("references").resizable(true).default_size(300.0).show(ui, |ui| self.references_panel(ui));
             }
             Some(SideView::Search) => {
                 egui::Panel::left("search").resizable(true).default_size(260.0).show(ui, |ui| self.search_panel(ui));
@@ -599,6 +710,9 @@ impl eframe::App for App {
             });
         }
         egui::CentralPanel::no_frame().show(ui, |ui| self.workspace(ui));
+        self.start_nav();
+        self.poll_nav();
+        self.nav_popup_window(&ctx);
         self.link_error_window(&ctx);
         self.validate_window(&ctx);
         if self.prefs_open {
@@ -1351,8 +1465,12 @@ impl App {
         let accent = self.theme.palette().map_or(Color32::from_rgb(0, 120, 215), |p| p.line);
         ui.add_space(6.0);
         // Search is there only while a folder is open.
-        for view in [SideView::Explorer, SideView::Search, SideView::Diagram] {
+        for view in [SideView::Explorer, SideView::Search, SideView::References, SideView::Diagram] {
             if view == SideView::Search && self.explorer.is_none() {
+                continue;
+            }
+            // References only while there are results.
+            if view == SideView::References && self.references.is_none() {
                 continue;
             }
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
@@ -1360,6 +1478,7 @@ impl App {
             let title = match view {
                 SideView::Explorer => "Explorer",
                 SideView::Search => "Search (Ctrl+Shift+F)",
+                SideView::References => "References",
                 SideView::Diagram => "Diagram shapes",
             };
             let resp = resp.on_hover_text(if shown { format!("{title} (click to hide, Ctrl+B)") } else { title.to_owned() });
@@ -1374,6 +1493,7 @@ impl App {
             match view {
                 SideView::Explorer => files_icon(painter, rect.center(), Stroke::new(1.4, col)),
                 SideView::Search => search_icon(painter, rect.center(), Stroke::new(1.6, col)),
+                SideView::References => references_icon(painter, rect.center(), Stroke::new(1.6, col)),
                 SideView::Diagram => flowchart_icon(painter, rect.center(), Stroke::new(1.3, col)),
             }
             if resp.clicked() {
@@ -1548,57 +1668,225 @@ impl App {
         });
         ui.add_space(2.0);
 
-        // One row per file, followed by its matching lines when searching for text.
-        enum Row {
-            File(usize),
-            Line(usize, usize),
-        }
-        let mut rows = Vec::new();
-        for (i, hit) in self.search.results.iter().enumerate() {
-            rows.push(Row::File(i));
-            rows.extend((0..hit.lines.len()).map(|j| Row::Line(i, j)));
-        }
         let focused_path = self.focused_disk_path();
-        // The file to open, and where: (line, from, to).
-        let mut open: Option<(PathBuf, Option<(usize, usize, usize)>)> = None;
-        egui::ScrollArea::both().id_salt("search_results").auto_shrink(false).show_rows(ui, 22.0, rows.len(), |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for row in &rows[range] {
-                match *row {
-                    Row::File(i) => {
-                        let hit = &self.search.results[i];
-                        let selected = focused_path.as_deref() == Some(hit.path.as_path());
-                        let count = if !text {
-                            None
-                        } else if hit.binary_matches > 0 {
-                            Some(format!("{} (binary)", hit.binary_matches))
-                        } else {
-                            Some(hit.match_count().to_string())
-                        };
-                        let r = result_row(ui, &hit.name, &hit.dir, count.as_deref(), selected);
-                        if r.on_hover_text(hit.path.display().to_string()).clicked() {
-                            open = Some((hit.path.clone(), None));
-                        }
-                    }
-                    Row::Line(i, j) => {
-                        let hit = &self.search.results[i];
-                        let m = &hit.lines[j];
-                        if match_row(ui, m.line, &m.preview, &m.preview_ranges()).clicked() {
-                            let (a, b) = m.cols.first().copied().unwrap_or((0, 0));
-                            open = Some((hit.path.clone(), Some((m.line, a, b))));
-                        }
-                    }
-                }
-            }
-        });
+        let results = std::mem::take(&mut self.search.results);
+        let open = hit_list(ui, "search_results", &results, text, focused_path.as_deref());
+        self.search.results = results;
         if let Some((path, at)) = open {
-            self.open_disk_file(&path);
-            if let Some((line, a, b)) = at {
-                let tab = self.tabs.iter().find(|t| matches!(&t.content, crate::tabs::Content::DiskText { path: p, .. } if *p == path));
-                if let Some(id) = tab.map(|t| t.id) {
-                    crate::code::request_goto(ui.ctx(), ("disk", id), line, a, b);
+            self.open_at(&path, at);
+        }
+    }
+
+    /// Opens a file on disk in a tab and, with `at` = (line from 1, from, to), selects those
+    /// characters of that line.
+    fn open_at(&mut self, path: &std::path::Path, at: Option<(usize, usize, usize)>) {
+        self.open_disk_file(path);
+        if let Some((line, a, b)) = at {
+            let tab = self.tabs.iter().find(|t| matches!(&t.content, crate::tabs::Content::DiskText { path: p, .. } if p == path));
+            if let Some(id) = tab.map(|t| t.id) {
+                crate::code::request_goto(&self.egui_ctx, ("disk", id), line, a, b);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------- code navigation
+
+    /// Carries out the navigation asked for in a C/C++ editor this frame: asks clangd (started
+    /// when first needed, for the explorer's folder), or for Switch Header/Source without clangd
+    /// looks for the file by name.
+    fn start_nav(&mut self) {
+        use crate::lsp::NavKind;
+        let Some((tab, kind, at)) = self.nav_request.take() else { return };
+        let Some(i) = self.index_of(tab) else { return };
+        let crate::tabs::Content::DiskText { path, text, .. } = &self.tabs[i].content else { return };
+        let (path, text) = (path.clone(), text.clone());
+        let before: String = text.chars().take(at).collect();
+        let line = before.matches('\n').count();
+        let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count());
+        let line_text = text.split('\n').nth(line).unwrap_or("");
+        self.nav_symbol = word_at(line_text, col);
+        self.nav_pos = self.egui_ctx.input(|i| i.pointer.latest_pos());
+        self.nav_origin = Some(path.clone());
+        let root = self.explorer.as_ref().map_or_else(|| path.parent().unwrap_or(&path).to_path_buf(), |e| e.root.clone());
+        if self.lsp.as_mut().is_some_and(|l| l.exited() || l.root != root) {
+            self.lsp = None;
+        }
+        if self.lsp.is_none() {
+            let ctx = self.egui_ctx.clone();
+            match crate::lsp::Lsp::start(&root, move || ctx.request_repaint()) {
+                Ok(l) => self.lsp = Some(l),
+                Err(e) => {
+                    if kind == NavKind::SwitchHeaderSource {
+                        self.switch_by_name();
+                    } else {
+                        self.status = format!("{}: {e}", kind.title());
+                    }
+                    return;
                 }
             }
+        }
+        if let Some(lsp) = self.lsp.as_mut() {
+            lsp.request(kind, &path, &text, line, crate::lsp::utf16_col(line_text, col));
+            self.status = format!("{}: asking clangd...", kind.title());
+        }
+    }
+
+    /// Switch Header/Source by file name (without clangd, or when it does not know).
+    fn switch_by_name(&mut self) {
+        let Some(origin) = self.nav_origin.clone() else { return };
+        let root = self.explorer.as_ref().map(|e| e.root.clone());
+        match crate::lsp::counterpart(&origin, root.as_deref()) {
+            Some(other) => self.open_at(&other, None),
+            None => {
+                let name = origin.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.status = format!("No matching header or source file for {name}");
+            }
+        }
+    }
+
+    /// Takes clangd's answers: one place is opened at once; several are listed (in a pop-up, or
+    /// for Find All References in the References panel).
+    fn poll_nav(&mut self) {
+        use crate::lsp::NavKind;
+        let Some(lsp) = self.lsp.as_mut() else { return };
+        for r in lsp.poll() {
+            let symbol = if self.nav_symbol.is_empty() { String::new() } else { format!(" for '{}'", self.nav_symbol) };
+            if r.kind == NavKind::SwitchHeaderSource {
+                match r.locations.first() {
+                    Some(loc) => {
+                        let path = loc.path.clone();
+                        self.open_at(&path, None);
+                        self.status.clear();
+                    }
+                    None => self.switch_by_name(),
+                }
+                continue;
+            }
+            if r.locations.is_empty() {
+                self.status = format!("No {} found{symbol} (clangd may still be indexing the project)", r.kind.noun());
+                continue;
+            }
+            let hits = self.locations_to_hits(&r.locations);
+            let count: usize = hits.iter().map(|h| h.lines.len()).sum();
+            let title = format!("{}{symbol}", r.kind.title());
+            self.status = format!("{title}: {count} found");
+            match r.kind {
+                NavKind::FindAllReferences => {
+                    self.references = Some(NavList { title, hits, pos: None });
+                    self.side = Some(SideView::References);
+                }
+                _ if count == 1 => {
+                    let (path, m) = (hits[0].path.clone(), &hits[0].lines[0]);
+                    let (a, b) = m.cols[0];
+                    self.open_at(&path, Some((m.line, a, b)));
+                }
+                _ => self.nav_popup = Some(NavList { title, hits, pos: self.nav_pos }),
+            }
+        }
+    }
+
+    /// clangd's places as files with lines (like search results), the text read from the open
+    /// tab or the disk.
+    fn locations_to_hits(&self, locations: &[crate::lsp::Location]) -> Vec<crate::search::Hit> {
+        let root = self.explorer.as_ref().map(|e| e.root.clone());
+        let mut hits: Vec<crate::search::Hit> = Vec::new();
+        let mut texts: std::collections::HashMap<PathBuf, String> = Default::default();
+        for loc in locations {
+            let text = texts.entry(loc.path.clone()).or_insert_with(|| {
+                let open = self.tabs.iter().find_map(|t| match &t.content {
+                    crate::tabs::Content::DiskText { path, text, .. }
+                        if std::fs::canonicalize(path).ok().as_deref() == Some(loc.path.as_path()) || *path == loc.path =>
+                    {
+                        Some(text.clone())
+                    }
+                    _ => None,
+                });
+                open.unwrap_or_else(|| std::fs::read(&loc.path).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default())
+            });
+            let line_text = text.split('\n').nth(loc.line).unwrap_or("").trim_end_matches('\r');
+            let a = crate::lsp::char_col(line_text, loc.start_utf16);
+            let b = crate::lsp::char_col(line_text, loc.end_utf16).max(a);
+            let m = crate::search::LineMatch::new(loc.line + 1, line_text, vec![(a, b)]);
+            match hits.iter_mut().find(|h| h.path == loc.path) {
+                Some(h) => {
+                    if !h.lines.iter().any(|l| l.line == m.line && l.cols == m.cols) {
+                        h.lines.push(m);
+                    }
+                }
+                None => {
+                    let name = loc.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let parent = loc.path.parent().unwrap_or(&loc.path);
+                    let dir = match root.as_deref().and_then(|r| parent.strip_prefix(r).ok()) {
+                        Some(rel) => rel.to_string_lossy().replace('\\', "/"),
+                        None => parent.display().to_string(),
+                    };
+                    hits.push(crate::search::Hit { path: loc.path.clone(), name, dir, lines: vec![m], binary_matches: 0 });
+                }
+            }
+        }
+        for h in &mut hits {
+            h.lines.sort_by_key(|l| (l.line, l.cols.first().copied()));
+        }
+        hits.sort_by_cached_key(|h| (h.dir.to_lowercase(), h.name.to_lowercase()));
+        hits
+    }
+
+    /// The places found for Go to ... when there are several: a list near where it was asked.
+    /// Clicking one opens it; clicking elsewhere or Esc closes the list.
+    fn nav_popup_window(&mut self, ctx: &egui::Context) {
+        let Some(list) = self.nav_popup.take() else { return };
+        let pos = list.pos.unwrap_or_else(|| ctx.content_rect().center() - vec2(260.0, 160.0));
+        let focused = self.focused_disk_path();
+        let mut open = None;
+        let area = egui::Area::new(egui::Id::unique("nav_popup")).order(egui::Order::Foreground).fixed_pos(pos).constrain(true).show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_width(520.0);
+                ui.strong(&list.title);
+                ui.add_space(4.0);
+                let rows: usize = list.hits.iter().map(|h| 1 + h.lines.len()).sum();
+                ui.allocate_ui(vec2(520.0, (rows as f32 * 22.0).min(330.0)), |ui| {
+                    open = hit_list(ui, "nav_popup_list", &list.hits, true, focused.as_deref());
+                });
+            });
+        });
+        let close = open.is_some() || area.response.clicked_elsewhere() || ctx.input(|i| i.key_pressed(Key::Escape));
+        if let Some((path, at)) = open {
+            self.open_at(&path, at);
+        }
+        if !close {
+            self.nav_popup = Some(list);
+        }
+    }
+
+    /// The References panel: the results of Find All References, by file.
+    fn references_panel(&mut self, ui: &mut Ui) {
+        self.panel_header(ui, "REFERENCES", None);
+        ui.add_space(2.0);
+        let Some(list) = self.references.take() else {
+            ui.weak("Right-click a symbol in a C/C++ file and choose Find All References (Shift+Alt+F12).");
+            return;
+        };
+        let count: usize = list.hits.iter().map(|h| h.lines.len()).sum();
+        let files = list.hits.len();
+        let mut clear = false;
+        ui.horizontal(|ui| {
+            ui.label(&list.title);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                clear = ui.small_button("\u{d7}").on_hover_text("Clear the results").clicked();
+            });
+        });
+        let plural = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        ui.weak(format!("{} in {}", plural(count, "result", "results"), plural(files, "file", "files")));
+        ui.add_space(2.0);
+        let focused = self.focused_disk_path();
+        let open = hit_list(ui, "references_list", &list.hits, true, focused.as_deref());
+        if !clear {
+            self.references = Some(list);
+        } else if self.side == Some(SideView::References) {
+            self.side = Some(SideView::Explorer);
+        }
+        if let Some((path, at)) = open {
+            self.open_at(&path, at);
         }
     }
 
